@@ -452,6 +452,52 @@ const api = {
     }>
     total: number
   }> => ipcRenderer.invoke('irLibrary:query', options),
+  irLibraryQueryForExport: (options: {
+    libraryRootId?: number | null
+    folderId?: number | null
+    search?: string
+    favoritesOnly?: boolean
+    minRating?: number
+    tagId?: number
+    manufacturer?: string | string[]
+    cabinet?: string
+    speaker?: string | string[]
+    microphone?: string | string[]
+    sampleRate?: number | number[]
+    bitDepth?: number | number[]
+    channels?: number
+    sort?: string
+    sortDir?: 'asc' | 'desc'
+  }): Promise<{
+    rows: Array<{
+      id: string
+      relative_path: string
+      display_name: string
+      file_size: number | null
+      is_favorite: number
+      rating: number | null
+      missing_since: string | null
+      capture_id: string | null
+      folder_id: number | null
+      library_root_id: number
+      manufacturer: string | null
+      manufacturer_source: string | null
+      cabinet: string | null
+      cabinet_source: string | null
+      speaker: string | null
+      speaker_source: string | null
+      microphone: string | null
+      microphone_source: string | null
+      sample_rate: number | null
+      bit_depth: number | null
+      channels: number | null
+      duration_seconds: number | null
+      audio_format: string | null
+      abs_path: string
+    }>
+    total: number
+    truncated: boolean
+  }> => ipcRenderer.invoke('irLibrary:queryForExport', options),
   irLibrarySetFavorite: (itemId: string, isFavorite: boolean): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('irLibrary:setFavorite', itemId, isFavorite),
   irLibrarySetRating: (itemId: string, rating: number | null): Promise<{ success: boolean }> =>

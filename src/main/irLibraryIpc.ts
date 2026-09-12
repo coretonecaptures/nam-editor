@@ -410,6 +410,44 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     }
   )
 
+  // Spreadsheet export (audit finding B6) — same filter shape as irLibrary:query, minus paging:
+  // this runs the current browse/search/facet scope with no LIMIT/OFFSET (up to a hard cap) so
+  // the export always matches what's on screen, not just the currently-loaded page window.
+  // Capped rather than unbounded — a real library here runs into the hundreds of thousands of
+  // rows (B7), and there's no reason a spreadsheet needs to hold more than this at once.
+  const EXPORT_ROW_CAP = 250_000
+  ipcMain.handle(
+    'irLibrary:queryForExport',
+    (
+      _event,
+      options: {
+        libraryRootId?: number | null
+        folderId?: number | null
+        search?: string
+        favoritesOnly?: boolean
+        minRating?: number
+        tagId?: number
+        manufacturer?: string | string[]
+        cabinet?: string
+        speaker?: string | string[]
+        microphone?: string | string[]
+        sampleRate?: number | number[]
+        bitDepth?: number | number[]
+        channels?: number
+        sort?: string
+        sortDir?: 'asc' | 'desc'
+      }
+    ) => {
+      const database = getDb()
+      const total = countItems(database, options)
+      const rows = queryItems(database, { ...options, offset: 0, limit: EXPORT_ROW_CAP }).map((row) => ({
+        ...row,
+        abs_path: join(row.library_root_path, ...row.relative_path.split('/'))
+      }))
+      return { rows, total, truncated: total > EXPORT_ROW_CAP }
+    }
+  )
+
   ipcMain.handle('irLibrary:setFavorite', (_event, itemId: string, isFavorite: boolean) => {
     setFavorite(getDb(), itemId, isFavorite)
     return { success: true }

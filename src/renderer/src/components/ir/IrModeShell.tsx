@@ -15,6 +15,7 @@ import guitarJackIcon from '../../assets/icons/guitar-jack.png'
 import { formatSampleRate } from '../../../../shared/wavFormat'
 import { SettingsPanel } from '../SettingsPanel'
 import { IR_ITEM_DRAG_MIME } from './dragMime'
+import { exportIrCatalogCSV, exportIrCatalogXLSX } from './irExport'
 import { IrDuplicatesModal } from './IrDuplicatesModal'
 import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { IrBatchRenameModal } from './IrBatchRenameModal'
@@ -307,6 +308,9 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [connectorAvailable, setConnectorAvailable] = useState(false)
   const [irLabStatus, setIrLabStatus] = useState<IrLabStatus | null>(null)
   const [sendingTray, setSendingTray] = useState(false)
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [trayError, setTrayError] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; row: IrItemRow } | null>(null)
   const [panelWidth, setPanelWidth] = useState(() => {
@@ -969,6 +973,39 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       })
   }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId, sortKey, sortDir])
 
+  // Spreadsheet export (B6) — the SAME filter scope the current view is showing, not just the
+  // loaded page window (queryForExport re-runs the query with no LIMIT, up to its own hard cap).
+  const exportCurrentView = useCallback(
+    async (format: 'csv' | 'xlsx') => {
+      setShowExportMenu(false)
+      setExporting(true)
+      setExportNotice(null)
+      try {
+        const res = await window.api.irLibraryQueryForExport({
+          libraryRootId: selectedRootId,
+          search: search || undefined,
+          folderId: selectedFolderId,
+          favoritesOnly: favoritesOnly || undefined,
+          minRating: ratedOnly ? 1 : undefined,
+          tagId: tagFilterId ?? undefined,
+          ...facets,
+          ...audioFacets,
+          sort: sortKey,
+          sortDir
+        })
+        const filename = `ir-library.${format}`
+        if (format === 'csv') exportIrCatalogCSV(res.rows, filename)
+        else exportIrCatalogXLSX(res.rows, filename)
+        if (res.truncated) {
+          setExportNotice(`Exported the first ${res.rows.length.toLocaleString()} of ${res.total.toLocaleString()} matching IRs — narrow the filter to get the rest.`)
+        }
+      } finally {
+        setExporting(false)
+      }
+    },
+    [selectedRootId, search, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, sortKey, sortDir]
+  )
+
   const toggleFavorite = useCallback((row: IrItemRow, index: number) => {
     const next = row.is_favorite ? 0 : 1
     cacheRef.current.set(index, { ...row, is_favorite: next })
@@ -1151,6 +1188,37 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           >
             Build Library…
           </button>
+        )}
+        {hasAnyRoot && (
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowExportMenu((v) => !v)}
+              disabled={exporting}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+              title="Export the current view (filters/search included) as a spreadsheet"
+            >
+              {exporting ? 'Exporting…' : 'Export…'}
+            </button>
+            {showExportMenu && (
+              <div
+                onMouseLeave={() => setShowExportMenu(false)}
+                className="absolute right-0 top-full mt-1 w-40 bg-panel border border-field-bd rounded shadow-xl z-50 py-1"
+              >
+                <button
+                  onClick={() => void exportCurrentView('csv')}
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  CSV
+                </button>
+                <button
+                  onClick={() => void exportCurrentView('xlsx')}
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  Excel (.xlsx)
+                </button>
+              </div>
+            )}
+          </div>
         )}
         {hasAnyRoot && (
           <div className="flex rounded overflow-hidden border border-field-bd flex-shrink-0">
@@ -1372,6 +1440,14 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         <div className="flex items-center justify-between gap-2 px-4 py-1 text-xs text-nm-text-2 bg-active-bg flex-shrink-0">
           <span>{importResult}</span>
           <button onClick={() => setImportResult(null)} className="text-nm-text-3 hover:text-nm-text flex-shrink-0">
+            ×
+          </button>
+        </div>
+      )}
+      {exportNotice && (
+        <div className="flex items-center justify-between gap-2 px-4 py-1 text-xs text-nm-text-2 bg-active-bg flex-shrink-0">
+          <span>{exportNotice}</span>
+          <button onClick={() => setExportNotice(null)} className="text-nm-text-3 hover:text-nm-text flex-shrink-0">
             ×
           </button>
         </div>
