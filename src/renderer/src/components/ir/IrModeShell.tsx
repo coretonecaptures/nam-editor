@@ -60,11 +60,28 @@ type IrItemRow = {
   duration_seconds: number | null
   audio_format: string | null
   abs_path: string
+  // Already selected by queryLibrary.ts's browse query (ItemRow there) but never threaded onto
+  // this file's own copy of the row shape until now — real, already-scanned data, not new backend
+  // work. preset_kind ("Cab IR" / "Short Reverb IR" / etc, auto-populated) is the only real signal
+  // for the design mock's CAB/VERB type tag; mic_a_target_zone ("Cap Center" / "Cap Edge" / "Cone
+  // Middle" / etc, IR Lab's own fixed vocabulary) is the closest real field to the mock's POSITION
+  // column — not an exact match to the mock's illustrative "cap 2\"" text, but real rather than
+  // fabricated.
+  preset_kind: string | null
+  speaker_position: string | null
+  mic_a_target_zone: string | null
 }
 
 type LibraryRoot = { id: number; path: string; label: string | null; watch_mode: string; created_at: string }
 
-const ROW_HEIGHT = 72
+// 56px (not the old 72px two-line stacked layout) once the row became a single dense line of real
+// table columns, matching design_handoff_ir_prototype's screenshots — 72px was sized for wrapping
+// content that no longer wraps.
+const ROW_HEIGHT = 56
+// Shared between the list header and every data row so their columns actually line up: type-tag |
+// name+maker | format | length | mic/space | position. Checkbox, size, and the action icons stay
+// their own flex siblings around this grid (unchanged from before), not part of it.
+const IR_ROW_GRID = '32px minmax(160px,1.6fr) 118px 56px 64px minmax(90px,1fr)'
 const PAGE_SIZE = 200
 
 const IR_SORT_LS_KEY = 'nam-lab-ir-sort'
@@ -81,67 +98,65 @@ const IR_SORT_LABELS: Record<IrSortKey, string> = {
 }
 
 /**
- * Confidence-ladder badge color (plan section 3) — "a small badge, not a modal," per field.
- * Only the two sources Phase 3's parsers actually produce are handled; ir_lab_native/
- * vendor_documentation/user_entered aren't written by any code yet (Phase 4/5/UI-editing).
+ * Row-level fields render as plain, mostly-uncolored text now (design_handoff_ir_prototype's
+ * screenshots — format/mic/position are plain IBM Plex Mono text, not badges). The type tag
+ * (CAB/VERB) is the one deliberate exception that stays a small solid-filled chip, same rule as
+ * NAM Projects' captureScope. `FieldBadge`/`FIELD_CHIP_CLASS` (per-field solid pills for
+ * manufacturer/cabinet/speaker/microphone) are gone, not just restyled — that whole approach was
+ * the "wall of colored pills" this rewrite replaces, not something to keep alongside the new look.
+ * Manufacturer becomes the coral maker-name line under the impulse name; microphone becomes the
+ * MIC/SPACE column; cabinet/speaker are dropped from the row entirely (the mock doesn't surface
+ * them here either — still filterable via the top Format/Mic dropdowns, just not per-row anymore).
  */
 
-/** Faceted filter chip (plan: "click-to-narrow-by-field UI"). Clicking a badge sets that field as
- * the ONLY active filter for it (clicking an active badge again clears it) — a plain toggle, not
- * a multi-select facet browser, matching the scope actually asked for. */
-/** Field type -> chip color, one of the `chip-ir-*` classes added to index.css alongside NAM
- * Lab's own gear/tone chip colors — same `.nam-chip` system, so these pills follow the user's
- * global soft/solid/minimal chip-style setting instead of hardcoding one look. */
-const FIELD_CHIP_CLASS: Record<string, string> = {
-  manufacturer: 'chip-ir-manufacturer',
-  cabinet: 'chip-ir-cabinet',
-  speaker: 'chip-ir-speaker',
-  microphone: 'chip-ir-mic'
+/** "Cab IR" / "Short Reverb IR" / etc (real, auto-populated data, see IrItemRow's own comment) ->
+ * the mock's small solid CAB/VERB tag. Returns null (no tag) rather than guessing when unknown —
+ * an unenriched older scan may have no preset_kind at all. */
+function kindTag(presetKind: string | null): { label: string; className: string } | null {
+  if (!presetKind) return null
+  const isReverb = /reverb/i.test(presetKind)
+  return isReverb
+    ? { label: 'VERB', className: 'bg-teal-600/90 text-white' }
+    : { label: 'CAB', className: 'bg-indigo-600/90 text-white' }
 }
 
-function FieldBadge({
-  field,
-  label,
+/** "44.1k · 24-bit · mono" — one plain mono-font string, not a row of chips. */
+function formatLabel(row: Pick<IrItemRow, 'sample_rate' | 'bit_depth' | 'channels'>): string {
+  const parts: string[] = []
+  if (row.sample_rate) parts.push(formatSampleRate(row.sample_rate))
+  if (row.bit_depth) parts.push(`${row.bit_depth}-bit`)
+  if (row.channels === 1) parts.push('mono')
+  else if (row.channels === 2) parts.push('stereo')
+  else if (row.channels) parts.push(`${row.channels}ch`)
+  return parts.join(' · ')
+}
+
+/** Plain, click-to-filter text (replaces a chip) — used for the maker line and the Mic/Space
+ * column. Still toggles its facet on click, just no longer shaped like a pill. */
+function PlainFieldText({
   value,
-  source,
+  colorVar,
   active,
-  onClick
+  onClick,
+  className = ''
 }: {
-  field: keyof typeof FIELD_CHIP_CLASS
-  label: string
   value: string | null
-  source: string | null
+  colorVar?: string
   active?: boolean
   onClick?: () => void
+  className?: string
 }): React.ReactElement | null {
   if (!value) return null
-  // A filename guess is the lowest-confidence source, so its pill is dimmed rather than full
-  // strength — the color still says what KIND of fact this is, the opacity says how sure we are.
-  const isGuess = source === 'filename_inferred' || source == null
   return (
     <button
       onClick={(e) => {
         e.stopPropagation()
         onClick?.()
       }}
-      title={`${label}: ${value} (${
-        source === 'vendor_parser'
-          ? 'vendor parser'
-          : source === 'filename_inferred'
-            ? 'filename guess'
-            : source === 'ir_lab_native'
-              ? 'IR Lab'
-              : source === 'ir_lab_embedded'
-                ? "IR Lab, embedded in the file"
-                : source === 'ir_lab_project'
-                  ? 'inherited from the IR Lab Project'
-                  : 'unknown source'
-      }) — click to filter`}
-      className={`nam-chip chip-force-minimal ${FIELD_CHIP_CLASS[field]} flex-shrink-0 ${isGuess ? 'opacity-60' : ''} ${
-        active ? 'ring-1 ring-nm-accent' : ''
-      }`}
+      title={`${value} — click to filter`}
+      style={colorVar ? { color: `var(${colorVar})` } : undefined}
+      className={`truncate text-left hover:underline ${active ? 'underline decoration-nm-accent' : ''} ${className}`}
     >
-      <span className="nam-dot" />
       {value}
     </button>
   )
@@ -1854,17 +1869,23 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                         </button>
                       </div>
                     )}
-                    <div className="flex items-center px-4 h-7 border-b border-nm-border-s bg-field-bg flex-shrink-0">
+                    <div className="flex items-center gap-3 px-4 h-7 border-b border-nm-border-s bg-field-bg flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ir-label-amber)]">
                       <button
                         onClick={() => toggleCheckAll(loadedIds)}
                         title="Select/deselect all loaded rows"
-                        className="w-[26px] flex-shrink-0 text-left text-nm-text-3 hover:text-nm-text text-sm"
+                        className="w-[18px] flex-shrink-0 text-left text-nm-text-3 hover:text-nm-text text-sm normal-case"
                       >
                         {headerCheckMark}
                       </button>
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ir-label-amber)]">
-                        Impulse / Maker
-                      </span>
+                      <div className="flex-1 min-w-0 grid items-center gap-3" style={{ gridTemplateColumns: IR_ROW_GRID }}>
+                        <span />
+                        <span>Impulse / Maker</span>
+                        <span>Format</span>
+                        <span>Length</span>
+                        <span>Mic / Space</span>
+                        <span>Position</span>
+                      </div>
+                      <span className="flex-shrink-0 w-14 text-right">Size</span>
                     </div>
                   </>
                 )
@@ -1950,127 +1971,86 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 >
                   {isChecked ? '☑' : '☐'}
                 </button>
-                <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-1.5">
-                  {renamingId === row.id ? (
-                    <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        autoFocus
-                        value={renameDraft}
-                        disabled={renameBusy}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onFocus={(e) => e.target.select()}
-                        onBlur={() => void commitRename()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
-                          else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
-                          e.stopPropagation()
-                        }}
-                        className="text-sm px-1 py-0.5 -mx-1 rounded border border-nm-accent bg-field-bg text-nm-text w-full"
-                      />
-                      {renameError && (
-                        <div className="text-[11px] text-red-500 flex items-center gap-2">
-                          {renameError}
-                          {renameError.includes('already exists') && (
-                            <button onClick={() => void commitRename(true)} className="text-nm-accent hover:underline flex-shrink-0">
-                              Overwrite
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-sm truncate leading-tight">{name}</div>
-                  )}
-                  {folder && <div className="text-[11px] text-[color:var(--ir-muted)] truncate leading-tight">{folder}</div>}
-                  {/* Audio-format pills and gear pills share ONE non-wrapping row rather than each
-                      stacking on its own line — the row is wide enough, and a fixed-height virtual
-                      list row can't grow to fit a third or fourth wrapped line without pills
-                      overlapping the row below it (the bug reported from the previous build).
-                      Anything past the available width is clipped by overflow-hidden rather than
-                      wrapping down into the next row. */}
-                  {(row.missing_since || row.sample_rate || row.channels || row.duration_seconds || row.manufacturer || row.cabinet || row.speaker || row.microphone) && (
-                    <div className="flex items-center gap-1 overflow-hidden">
-                      {row.missing_since && (
-                        <span
-                          className="nam-chip chip-force-minimal chip-ir-missing flex-shrink-0"
-                          title={`File not found on disk since ${new Date(row.missing_since).toLocaleString()} — click Play to see options`}
-                        >
-                          <span className="nam-dot" />
-                          Missing
-                        </span>
-                      )}
-                      {row.sample_rate ? (
-                        <button
-                          onClick={(e) => {
+                <div className="flex-1 min-w-0 grid items-center gap-3" style={{ gridTemplateColumns: IR_ROW_GRID }}>
+                  {(() => {
+                    const tag = kindTag(row.preset_kind)
+                    return tag ? (
+                      <span
+                        title={row.preset_kind ?? undefined}
+                        className={`justify-self-start px-1.5 h-4 rounded text-[9px] font-bold tracking-wide leading-4 ${tag.className}`}
+                      >
+                        {tag.label}
+                      </span>
+                    ) : (
+                      <span />
+                    )
+                  })()}
+                  <div className="min-w-0 flex flex-col justify-center">
+                    {renamingId === row.id ? (
+                      <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          value={renameDraft}
+                          disabled={renameBusy}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onBlur={() => void commitRename()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
                             e.stopPropagation()
-                            toggleAudioFacet('sampleRate', row.sample_rate!)
                           }}
-                          title="Filter to this sample rate"
-                          className={`nam-chip chip-force-minimal chip-ir-rate flex-shrink-0 ${audioFacets.sampleRate?.includes(row.sample_rate!) ? 'ring-1 ring-nm-accent' : ''}`}
-                        >
-                          <span className="nam-dot" />
-                          {formatSampleRate(row.sample_rate)}
-                        </button>
-                      ) : null}
-                      {row.bit_depth ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            toggleAudioFacet('bitDepth', row.bit_depth!)
-                          }}
-                          title="Filter to this bit depth"
-                          className={`nam-chip chip-force-minimal chip-ir-depth flex-shrink-0 ${audioFacets.bitDepth?.includes(row.bit_depth!) ? 'ring-1 ring-nm-accent' : ''}`}
-                        >
-                          <span className="nam-dot" />
-                          {row.bit_depth}-bit
-                        </button>
-                      ) : null}
-                      {row.channels ? (
-                        <span className="nam-chip chip-force-minimal chip-ir-channels flex-shrink-0">
-                          <span className="nam-dot" />
-                          {row.channels === 1 ? 'mono' : row.channels === 2 ? 'stereo' : `${row.channels}ch`}
-                        </span>
-                      ) : null}
-                      {row.duration_seconds ? (
-                        <span className="nam-chip chip-force-minimal chip-ir-length flex-shrink-0">
-                          <span className="nam-dot" />
-                          {row.duration_seconds.toFixed(2)}s
-                        </span>
-                      ) : null}
-                      <FieldBadge
-                        field="manufacturer"
-                        label="Manufacturer"
+                          className="text-sm px-1 py-0.5 -mx-1 rounded border border-nm-accent bg-field-bg text-nm-text w-full"
+                        />
+                        {renameError && (
+                          <div className="text-[11px] text-red-500 flex items-center gap-2">
+                            {renameError}
+                            {renameError.includes('already exists') && (
+                              <button onClick={() => void commitRename(true)} className="text-nm-accent hover:underline flex-shrink-0">
+                                Overwrite
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-sm truncate leading-tight">
+                        {row.missing_since && (
+                          <span
+                            title={`File not found on disk since ${new Date(row.missing_since).toLocaleString()} — click Play to see options`}
+                            className="text-orange-500 mr-1"
+                          >
+                            ⚠
+                          </span>
+                        )}
+                        {name}
+                      </div>
+                    )}
+                    {row.manufacturer ? (
+                      <PlainFieldText
                         value={row.manufacturer}
-                        source={row.manufacturer_source}
-                        active={row.manufacturer != null && (facets.manufacturer?.includes(row.manufacturer) ?? false)}
+                        colorVar="--ir-maker"
+                        active={facets.manufacturer?.includes(row.manufacturer) ?? false}
                         onClick={() => row.manufacturer && toggleFacet('manufacturer', row.manufacturer)}
+                        className="text-[11px] leading-tight"
                       />
-                      <FieldBadge
-                        field="cabinet"
-                        label="Cabinet"
-                        value={row.cabinet}
-                        source={row.cabinet_source}
-                        active={row.cabinet != null && facets.cabinet === row.cabinet}
-                        onClick={() => row.cabinet && toggleFacet('cabinet', row.cabinet)}
-                      />
-                      <FieldBadge
-                        field="speaker"
-                        label="Speaker"
-                        value={row.speaker}
-                        source={row.speaker_source}
-                        active={row.speaker != null && (facets.speaker?.includes(row.speaker) ?? false)}
-                        onClick={() => row.speaker && toggleFacet('speaker', row.speaker)}
-                      />
-                      <FieldBadge
-                        field="microphone"
-                        label="Microphone"
-                        value={row.microphone}
-                        source={row.microphone_source}
-                        active={row.microphone != null && (facets.microphone?.includes(row.microphone) ?? false)}
-                        onClick={() => row.microphone && toggleFacet('microphone', row.microphone)}
-                      />
-                    </div>
-                  )}
+                    ) : (
+                      folder && <div className="text-[11px] text-[color:var(--ir-muted)] truncate leading-tight">{folder}</div>
+                    )}
+                  </div>
+                  <span className="font-mono text-[11px] text-[color:var(--ir-muted)] truncate">{formatLabel(row) || '—'}</span>
+                  <span className="font-mono text-[11px] text-[color:var(--ir-muted)]">
+                    {row.duration_seconds ? `${row.duration_seconds.toFixed(2)}s` : '—'}
+                  </span>
+                  <PlainFieldText
+                    value={row.microphone}
+                    active={row.microphone != null && (facets.microphone?.includes(row.microphone) ?? false)}
+                    onClick={() => row.microphone && toggleFacet('microphone', row.microphone)}
+                    className="font-mono text-[11px] text-nm-text-2"
+                  />
+                  <span className="font-mono text-[11px] text-[color:var(--ir-faint)] truncate pl-4">
+                    {row.mic_a_target_zone ?? row.speaker_position ?? '—'}
+                  </span>
                 </div>
                 <div className="flex-shrink-0 text-xs text-[color:var(--ir-faint)] w-14 text-right">{formatBytes(row.file_size)}</div>
                 {/* Actions live to the RIGHT of the name, same side and same order as NAM Lab's
