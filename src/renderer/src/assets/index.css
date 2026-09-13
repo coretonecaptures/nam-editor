@@ -48,6 +48,26 @@
 
   /* Chart track (fallback) */
   --chart-track: #1f2937;
+
+  /* IR Management UI handoff (design_handoff_ir_prototype) — a small, purposeful accent family:
+     amber for section/header labels, coral/rose for maker/manufacturer identity text, two muted
+     greys for secondary metadata (path, format, size). Deliberately NOT reusing the app's own
+     --accent/indigo here (that stays for selection/cabinet-type) or its existing teal chip color
+     (reverb-type) -- those two are reused as-is per the handoff, not redefined. --ir-muted sits in
+     the #8b93a0-#9aa3ae range on purpose: an earlier draft's #5c6472 was flagged unreadable on a
+     dark panel in review (same contrast lesson the NAM Projects redesign hit with FIX_PATCH_v4). */
+  --ir-label-amber: #e0a94a;
+  --ir-maker: #fb7185;
+  --ir-muted: #9aa3ae;
+  --ir-faint: #7d8590;
+}
+
+[data-theme="light"] {
+  /* Same small palette, re-tuned for contrast on a light ground rather than inverted blindly. */
+  --ir-label-amber: #92660f;
+  --ir-maker: #be123c;
+  --ir-muted: #4b5563;
+  --ir-faint: #6b7280;
 }
 
 /* ============================================================

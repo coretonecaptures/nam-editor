@@ -53,17 +53,19 @@ function MultiselectFacet({
   }, [open])
 
   const active = selected.length > 0
+  // Handoff wording: "All" when empty, the option's own label when exactly one is picked,
+  // "N selected" when more than one -- not a bare count suffix on the facet's own label.
+  const valueLabel = selected.length === 0 ? 'All' : selected.length === 1 ? selected[0] : `${selected.length} selected`
 
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
-        className={`nam-chip ${chipClass} ${active ? '' : 'opacity-60'}`}
+        className={`nam-chip ${chipClass} ${active ? 'ring-1 ring-nm-accent' : 'opacity-60'}`}
         title={`Filter by ${label.toLowerCase()}`}
       >
         <span className="nam-dot" />
-        {label}
-        {active ? ` (${selected.length})` : '…'}
+        {label}: {valueLabel}
       </button>
       {open && (
         <div className="absolute left-0 top-full mt-1 w-56 max-h-80 flex flex-col bg-panel border border-nm-border rounded-lg shadow-xl z-50">

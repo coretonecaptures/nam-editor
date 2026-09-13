@@ -331,6 +331,16 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     const saved = Number(localStorage.getItem('nam-lab-ir-panel-width'))
     return Number.isFinite(saved) && saved > 0 ? saved : 256
   })
+  // Collapse is a separate boolean from width (design_handoff_ir_prototype) -- hiding the panel
+  // shouldn't forget how wide the user last dragged it to.
+  const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem('nam-lab-ir-panel-open') !== '0')
+  const togglePanelOpen = useCallback(() => {
+    setPanelOpen((v) => {
+      const next = !v
+      localStorage.setItem('nam-lab-ir-panel-open', next ? '1' : '0')
+      return next
+    })
+  }, [])
   // Bumped on every filter/search change so a query response that resolves AFTER a newer filter
   // was already selected gets thrown away instead of populating the cache with stale-context rows
   // (e.g. a slow "all IRs" query resolving after the user already clicked into a folder).
@@ -1131,6 +1141,48 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     window.api.irLibrarySetFavorite(row.id, next === 1)
   }, [])
 
+  // Bulk-select checkbox column (design_handoff_ir_prototype) reuses the EXISTING selectedIds set
+  // (already the multi-select target for the Move/Trash/Edit Metadata context-menu actions) rather
+  // than adding a second, parallel "checked" concept -- toggleChecked only touches selectedIds, not
+  // focusedIndex/selectionAnchorRef, so ticking a checkbox never disturbs which row drives the
+  // detail panel (unlike a plain row click, which resets the whole selection to just that row).
+  const toggleChecked = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  // "Every currently visible row" is scoped to what's actually in cacheRef -- the same scope the
+  // context menu's own menuRows already uses for a multi-row action, not a fresh unbounded query
+  // against the full (282K-row) catalog.
+  const toggleCheckAll = useCallback((ids: string[]) => {
+    setSelectedIds((prev) => (ids.length > 0 && ids.every((id) => prev.has(id)) ? new Set() : new Set(ids)))
+  }, [])
+  const bulkSetFavorite = useCallback(
+    (fav: boolean) => {
+      const value = fav ? 1 : 0
+      for (const [idx, row] of cacheRef.current.entries()) {
+        if (selectedIds.has(row.id) && row.is_favorite !== value) {
+          cacheRef.current.set(idx, { ...row, is_favorite: value })
+          window.api.irLibrarySetFavorite(row.id, fav)
+        }
+      }
+      forceRerender((n) => n + 1)
+    },
+    [selectedIds]
+  )
+  const exportChecked = useCallback(
+    (format: 'csv' | 'xlsx') => {
+      const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id))
+      const filename = `ir-selection.${format}`
+      if (format === 'csv') exportIrCatalogCSV(rows, filename)
+      else exportIrCatalogXLSX(rows, filename)
+    },
+    [selectedIds]
+  )
+
   /** Ratings persist fine (queryLibrary.setRating + the "Rated" quick filter both still work);
    * only the per-row star strip is currently unrendered, pending a decision on where ratings
    * belong in the row now that actions have moved to the right. Kept rather than deleted so
@@ -1754,6 +1806,69 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 className="flex-1"
               />
             ) : (
+              <>
+              {(() => {
+                const loadedIds = [...cacheRef.current.values()].map((r) => r.id)
+                const checkedCount = loadedIds.filter((id) => selectedIds.has(id)).length
+                const headerCheckMark = checkedCount === 0 ? '☐' : checkedCount === loadedIds.length ? '☑' : '◫'
+                return (
+                  <>
+                    {checkedCount > 0 && (
+                      <div className="flex items-center gap-3.5 px-4 py-2 border-b border-nm-border-s bg-panel-2 flex-shrink-0">
+                        <span className="text-xs font-semibold text-nm-text">{checkedCount} selected</span>
+                        <button onClick={() => bulkSetFavorite(true)} className="text-xs font-medium text-amber-500 hover:underline">
+                          ★ Favorite
+                        </button>
+                        <button
+                          onClick={() => {
+                            const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id))
+                            if (rows.length) setBatchEditRows(rows)
+                          }}
+                          className="text-xs font-medium text-nm-accent hover:underline"
+                        >
+                          Tag…
+                        </button>
+                        <button
+                          onClick={() => {
+                            const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id))
+                            if (rows.length) {
+                              setMoveModal({
+                                itemIds: rows.map((r) => r.id),
+                                libraryRootId: rows[0].library_root_id,
+                                currentFolderId: rows.length === 1 ? rows[0].folder_id : null
+                              })
+                            }
+                          }}
+                          className="text-xs font-medium text-nm-text-2 hover:underline"
+                        >
+                          Move…
+                        </button>
+                        <button onClick={() => exportChecked('csv')} className="text-xs font-medium text-nm-text-2 hover:underline">
+                          Export…
+                        </button>
+                        <button
+                          onClick={() => setSelectedIds(new Set())}
+                          className="ml-auto text-xs font-medium text-nm-text-3 hover:text-nm-text"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex items-center px-4 h-7 border-b border-nm-border-s bg-field-bg flex-shrink-0">
+                      <button
+                        onClick={() => toggleCheckAll(loadedIds)}
+                        title="Select/deselect all loaded rows"
+                        className="w-[26px] flex-shrink-0 text-left text-nm-text-3 hover:text-nm-text text-sm"
+                      >
+                        {headerCheckMark}
+                      </button>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ir-label-amber)]">
+                        Impulse / Maker
+                      </span>
+                    </div>
+                  </>
+                )
+              })()}
               <VirtualList
               total={total}
               rowHeight={ROW_HEIGHT}
@@ -1767,11 +1882,12 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             const { folder, name } = splitPath(row.relative_path)
             const isPlaying = playerIr?.id === row.id
             const isFocused = focusedIndex === index
-            const isSelected = selectedIds.has(row.id)
-            // With nothing multi-selected, the single focused row still highlights (unchanged
-            // single-select behavior); once a real multi-selection exists, selection membership
-            // takes over as the highlight so "which rows will Move/Trash/Edit act on" stays legible.
-            const isHighlighted = selectedIds.size > 0 ? isSelected : isFocused
+            const isChecked = selectedIds.has(row.id)
+            // Focused (drives the detail/right panel) always gets the stronger tint; a row that's
+            // only part of the bulk selection gets a lighter, distinct one -- so which row the
+            // panel is showing and which rows Move/Trash/Edit/the bulk bar will act on both stay
+            // legible at once, rather than one concept silently overriding the other's highlight.
+            const rowTintClass = isFocused ? 'bg-active-bg' : isChecked ? 'bg-nm-accent/10' : ''
             return (
               <div
                 onClick={(e) => {
@@ -1822,8 +1938,18 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   e.dataTransfer.setData(IR_ITEM_DRAG_MIME, JSON.stringify({ itemIds: draggedIds, libraryRootId: row.library_root_id }))
                   e.dataTransfer.effectAllowed = 'move'
                 }}
-                className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${isHighlighted ? 'bg-active-bg' : ''}`}
+                className={`group h-full flex items-center gap-3 px-4 border-b border-nm-border-s hover:bg-hov ${rowTintClass}`}
               >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleChecked(row.id)
+                  }}
+                  title={isChecked ? 'Deselect' : 'Select'}
+                  className="w-[18px] flex-shrink-0 text-sm text-nm-text-3 hover:text-nm-text"
+                >
+                  {isChecked ? '☑' : '☐'}
+                </button>
                 <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-1.5">
                   {renamingId === row.id ? (
                     <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
@@ -1855,7 +1981,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   ) : (
                     <div className="text-sm truncate leading-tight">{name}</div>
                   )}
-                  {folder && <div className="text-[11px] text-nm-text-3 truncate leading-tight">{folder}</div>}
+                  {folder && <div className="text-[11px] text-[color:var(--ir-muted)] truncate leading-tight">{folder}</div>}
                   {/* Audio-format pills and gear pills share ONE non-wrapping row rather than each
                       stacking on its own line — the row is wide enough, and a fixed-height virtual
                       list row can't grow to fit a third or fourth wrapped line without pills
@@ -1946,7 +2072,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                     </div>
                   )}
                 </div>
-                <div className="flex-shrink-0 text-xs text-nm-text-3 w-14 text-right">{formatBytes(row.file_size)}</div>
+                <div className="flex-shrink-0 text-xs text-[color:var(--ir-faint)] w-14 text-right">{formatBytes(row.file_size)}</div>
                 {/* Actions live to the RIGHT of the name, same side and same order as NAM Lab's
                     own rows (FileList.tsx): favourite, then play, then Play Live. Identical size,
                     icons, colors and hover treatment — faint at rest, growing to a solid filled
@@ -2006,8 +2132,21 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             )
           }}
             />
+              </>
             )}
           </div>
+          {!panelOpen ? (
+            <button
+              onClick={togglePanelOpen}
+              title="Show panel"
+              className="w-6 flex-shrink-0 flex items-center justify-center border-l border-nm-border-s hover:bg-hov text-nm-text-3 hover:text-nm-text"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+          ) : (
+          <>
           <div
             onMouseDown={onPanelDragStart}
             className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
@@ -2122,9 +2261,12 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 onAudioFacet={toggleAudioFacet}
                 activeFacets={facets}
                 activeAudioFacets={audioFacets}
+                onTogglePanel={togglePanelOpen}
               />
             )}
           </div>
+          </>
+          )}
         </div>
       )}
         </div>

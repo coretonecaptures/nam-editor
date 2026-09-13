@@ -32,7 +32,8 @@ export function IrRightPanel({
   onFacet,
   onAudioFacet,
   activeFacets,
-  activeAudioFacets
+  activeAudioFacets,
+  onTogglePanel
 }: {
   libraryRootId: number | null
   libraryRootPath: string | null
@@ -44,6 +45,9 @@ export function IrRightPanel({
   onAudioFacet?: (field: 'sampleRate' | 'bitDepth', value: number) => void
   activeFacets?: { manufacturer?: string[]; cabinet?: string; speaker?: string[]; microphone?: string[] }
   activeAudioFacets?: { sampleRate?: number[]; bitDepth?: number[] }
+  /** Collapses the whole panel (independent of its stored width) — design_handoff_ir_prototype's
+   * "⟩⟩" control in the tab strip. Optional so other IrRightPanel call sites don't need it. */
+  onTogglePanel?: () => void
 }): React.ReactElement {
   const [tab, setTab] = useState<Tab>('overview')
   const [folderAbsPath, setFolderAbsPath] = useState<string | null>(null)
@@ -93,6 +97,17 @@ export function IrRightPanel({
             {t.label}
           </button>
         ))}
+        {onTogglePanel && (
+          <button
+            onClick={onTogglePanel}
+            title="Collapse panel"
+            className="ml-auto p-1 rounded text-nm-text-3 hover:text-nm-text hover:bg-hov"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M6 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">
         {tab === 'overview' && (

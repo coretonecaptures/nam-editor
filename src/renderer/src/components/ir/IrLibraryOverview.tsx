@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { D1StatCard, D1BarList, CARD, EYEBROW } from '../FolderDashboard'
+import { D1StatCard, D1BarList, CARD } from '../FolderDashboard'
 import { formatSampleRate } from '../../../../shared/wavFormat'
 
 type Entry = { value: string; count: number }
@@ -24,9 +24,15 @@ type Overview = {
 }
 
 /** Same palette family NAM Lab's own dashboard uses for its bar lists — assigned by position so a
- * breakdown reads as a ranked set rather than an arbitrary rainbow. */
+ * breakdown reads as a ranked set rather than an arbitrary rainbow. Left exactly as-is per
+ * design_handoff_ir_prototype's explicit instruction not to reuse/restyle this panel's existing
+ * chart palette; only the section-label typography below picks up the handoff's new amber. */
 const RANK_COLORS = ['#6366f1', '#8b5cf6', '#a855f7', '#c084fc', '#d8b4fe', '#e9d5ff', '#ede9fe', '#f5f3ff']
 const FORMAT_COLORS = ['#14b8a6', '#22c55e', '#84cc16', '#eab308', '#f59e0b', '#f97316', '#ef4444', '#ec4899']
+// Local to this panel (not FolderDashboard's shared EYEBROW, which other screens still use
+// unchanged) -- design_handoff_ir_prototype's amber section-label color applied to this panel's
+// own headers only.
+const AMBER_EYEBROW = 'text-[10px] font-semibold uppercase tracking-[0.07em] text-[color:var(--ir-label-amber)]'
 
 function toRows(entries: Entry[], colors: string[]): Array<{ key: string; label: string; count: number; color: string }> {
   return entries.map((e, i) => ({ key: e.value, label: e.value, count: e.count, color: colors[i % colors.length] }))
@@ -115,7 +121,7 @@ export function IrLibraryOverview({
   return (
     <div className="h-full overflow-y-auto p-3 flex flex-col gap-3">
       <div className="flex flex-col gap-0.5">
-        <span className={EYEBROW}>{scoped ? 'Folder Report' : 'Library Report'}</span>
+        <span className={AMBER_EYEBROW}>{scoped ? 'Folder Report' : 'Library Report'}</span>
         <span className="text-sm font-semibold text-nm-text truncate">{scoped ? folderName : 'Whole library'}</span>
       </div>
 
@@ -148,7 +154,7 @@ export function IrLibraryOverview({
         </>
       ) : (
         <div className={`${CARD} flex flex-col gap-1`}>
-          <span className={EYEBROW}>Audio format</span>
+          <span className={AMBER_EYEBROW}>Audio format</span>
           <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
             Not read yet for {overview.missingAudioInfoCount.toLocaleString()} file
             {overview.missingAudioInfoCount === 1 ? '' : 's'}. Sample rate, bit depth, channels and length come from
@@ -182,7 +188,7 @@ export function IrLibraryOverview({
 
       {descriptive.length === 0 && (
         <div className={`${CARD} flex flex-col gap-1`}>
-          <span className={EYEBROW}>Gear</span>
+          <span className={AMBER_EYEBROW}>Gear</span>
           <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
             No manufacturer, speaker or microphone recognised in this scope yet. Those are read
             from filenames and folder names during a scan — run{' '}
