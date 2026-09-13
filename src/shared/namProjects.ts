@@ -105,6 +105,9 @@ export interface NamProjectSummary {
   toneTypes: string[]
   /** Most common non-null captureScope across this project's captures, or null. */
   scope: string | null
+  /** "48 kHz · 24-bit" summarizing every distinct sample rate / bit depth across this project's
+   * captures, or null if neither is known. */
+  rateDepth: string | null
   /** Minimal per-capture facts — just enough for `deriveCaptureStatus` to compute a live
    * queued/training/failed/missing breakdown client-side (against the live `queueJobs` stream)
    * without a full per-project detail fetch for every row in the index. */

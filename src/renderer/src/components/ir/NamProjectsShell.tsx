@@ -1291,16 +1291,20 @@ function ProjectsIndex({
         {visible.length === 0 ? (
           <div className="p-8 text-center text-xs text-nm-text-3">No projects match.</div>
         ) : view === 'list' ? (
-          <div className="flex flex-col px-5 py-3 gap-1 max-w-[1400px]">
-            <div className="flex items-center gap-3 px-3 pb-1.5 text-[10px] uppercase tracking-wide text-nm-text-3">
-              <span className="w-11 flex-shrink-0" />
-              <span className="flex-1 min-w-0">Project</span>
-              <span className="w-[168px] flex-shrink-0">Gear / Tone</span>
-              <span className="w-32 flex-shrink-0">Progress</span>
-              <span className="w-[196px] flex-shrink-0">Breakdown</span>
-              <span className="w-14 flex-shrink-0 text-right">Synth</span>
-              <span className="w-16 flex-shrink-0 text-right">Scanned</span>
-              <span className="w-10 flex-shrink-0" />
+          <div className="flex flex-col px-5 py-3 gap-1">
+            <div
+              className="grid items-center gap-3 px-3 pb-1.5 text-[10px] uppercase tracking-wide text-nm-text-3"
+              style={{ gridTemplateColumns: LIST_ROW_GRID }}
+            >
+              <span />
+              <span>Project</span>
+              <span>Gear / Tone</span>
+              <span>Rate / Depth</span>
+              <span>Progress</span>
+              <span>Breakdown</span>
+              <span className="text-right">Synth</span>
+              <span className="text-right">Scanned</span>
+              <span />
             </div>
             {visible.map((p) => (
               <ProjectIndexListRow
@@ -1429,6 +1433,12 @@ function ProjectsIndex({
   )
 }
 
+// Proportional (fr-based), not fixed-px, for the columns that hold variable-length content (name,
+// gear/tone chips, breakdown) -- a fixed px width wraps its own content in a narrow box even when
+// the row as a whole has plenty of spare width on a wide monitor. Shared between the header row
+// and every data row so they always line up.
+const LIST_ROW_GRID = '44px minmax(160px,1.3fr) minmax(150px,1.1fr) 96px 128px minmax(170px,1.2fr) 56px 64px 44px'
+
 /** dot+count label used for capture-status */
 const BREAKDOWN_ORDER: CaptureStatus[] = ['trained', 'training', 'queued', 'untrained', 'failed', 'missing']
 const BREAKDOWN_LABEL: Record<CaptureStatus, string> = {
@@ -1509,18 +1519,19 @@ function ProjectIndexListRow({
       onDoubleClick={onOpen}
       role="button"
       tabIndex={0}
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-left cursor-pointer border ${
+      className={`grid items-center gap-3 px-3 py-2 rounded-lg text-left cursor-pointer border ${
         selected ? 'bg-active-bg border-nm-accent/40' : 'border-transparent hover:bg-hov hover:border-nm-border-s'
       }`}
+      style={{ gridTemplateColumns: LIST_ROW_GRID }}
     >
-      <div className="w-11 h-11 flex-shrink-0 rounded-md overflow-hidden bg-field-bg flex items-center justify-center">
+      <div className="w-11 h-11 rounded-md overflow-hidden bg-field-bg flex items-center justify-center">
         {project.coverImagePath ? (
           <ScaledImage src={fileSrc(project.coverImagePath)} width={44} height={44} fit="cover" className="w-full h-full" />
         ) : (
           <span className="w-full h-full bg-panel-2" />
         )}
       </div>
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0">
         <div className="text-[12.5px] font-semibold text-nm-text truncate">{project.name}</div>
         {(project.cabinet || project.speaker) && (
           <div className="text-[10.5px] text-nm-text-3 truncate mt-0.5">
@@ -1528,10 +1539,9 @@ function ProjectIndexListRow({
           </div>
         )}
       </div>
-      <div className="w-[168px] flex-shrink-0">
-        <ProjectFacetChips scope={project.scope} gearTypes={project.gearTypes} toneTypes={project.toneTypes} />
-      </div>
-      <div className="w-32 flex-shrink-0 flex items-center gap-2">
+      <ProjectFacetChips scope={project.scope} gearTypes={project.gearTypes} toneTypes={project.toneTypes} />
+      <span className="text-[10px] font-mono text-nm-text-3 whitespace-nowrap">{project.rateDepth ?? '—'}</span>
+      <div className="flex items-center gap-2">
         <span className="flex-1 h-[5px] rounded-full bg-field-bg overflow-hidden">
           <span className="block h-full bg-emerald-500/80" style={{ width: `${pct}%` }} />
         </span>
@@ -1539,19 +1549,17 @@ function ProjectIndexListRow({
           {project.trainedCount}/{project.captureCount}
         </span>
       </div>
-      <div className="w-[196px] flex-shrink-0">
-        <ProjectBreakdown counts={breakdown} />
-      </div>
-      <span className="w-14 flex-shrink-0 text-right text-[10px] text-nm-text-3 tabular-nums">
+      <ProjectBreakdown counts={breakdown} />
+      <span className="text-right text-[10px] text-nm-text-3 tabular-nums">
         {project.syntheticCount > 0 ? project.syntheticCount : '—'}
       </span>
-      <span className="w-16 flex-shrink-0 text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
+      <span className="text-right text-[10px] text-nm-text-3">{relTime(project.createdAt) ?? '—'}</span>
       <button
         onClick={(e) => {
           e.stopPropagation()
           onOpen()
         }}
-        className="w-10 flex-shrink-0 text-right text-[11px] font-semibold text-nm-accent hover:underline"
+        className="text-right text-[11px] font-semibold text-nm-accent hover:underline"
       >
         Open →
       </button>

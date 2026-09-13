@@ -387,6 +387,9 @@ export interface NamProjectSummary {
   gearTypes: string[]
   toneTypes: string[]
   scope: string | null
+  /** "48 kHz · 24-bit" summarizing every distinct sample rate / bit depth across this project's
+   * captures, or null if neither is known — cheap since `captures` is already fetched here. */
+  rateDepth: string | null
   captures: Array<{
     itemId: string
     captureId: string | null
@@ -616,6 +619,12 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
     const captures = (captureStmt.all(c.id) as unknown as CaptureQueryRow[]).map(mapCaptureRow)
     const { namCapturesDir, projectDir } = resolveProjectDirs(captures)
     const scopeTally = tally(captures.map((x) => x.captureScope)).filter((t) => t.key !== 'unknown')
+    const rates = [...new Set(captures.map((x) => x.sampleRate).filter((v): v is number => v != null))]
+    const depths = [...new Set(captures.map((x) => x.recordingBitDepth).filter((v): v is number => v != null))]
+    const rateDepth =
+      rates.length || depths.length
+        ? [rates.map((r) => `${r / 1000}kHz`).join('/'), depths.map((d) => `${d}-bit`).join('/')].filter(Boolean).join(' · ')
+        : null
     return {
       collectionId: c.id,
       projectId: c.projectId,
@@ -632,6 +641,7 @@ export function listNamProjects(db: DatabaseSync): NamProjectSummary[] {
       gearTypes: [...new Set(captures.map((x) => x.effective.gearType).filter((v): v is string => !!v))],
       toneTypes: [...new Set(captures.map((x) => x.effective.toneType).filter((v): v is string => !!v))],
       scope: scopeTally[0]?.key ?? null,
+      rateDepth,
       captures: captures.map((x) => ({
         itemId: x.itemId,
         captureId: x.captureId,
