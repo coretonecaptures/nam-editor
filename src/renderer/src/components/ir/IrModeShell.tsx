@@ -82,6 +82,10 @@ const ROW_HEIGHT = 56
 // name+maker | format | length | mic/space | position. Checkbox, size, and the action icons stay
 // their own flex siblings around this grid (unchanged from before), not part of it.
 const IR_ROW_GRID = '32px minmax(160px,1.6fr) 118px 56px 64px minmax(90px,1fr)'
+// Reserved width for the trailing favorite/play/play-live icon buttons (each ~36px, gap-3 between
+// them, the parent row's own gap-3 in front) -- the header row needs a matching spacer after its
+// "Size" label so the header text actually sits above the size VALUES, not past them.
+const IR_ROW_ACTIONS_WIDTH = 116
 const PAGE_SIZE = 200
 
 const IR_SORT_LS_KEY = 'nam-lab-ir-sort'
@@ -112,9 +116,14 @@ const IR_SORT_LABELS: Record<IrSortKey, string> = {
 /** "Cab IR" / "Short Reverb IR" / etc (real, auto-populated data, see IrItemRow's own comment) ->
  * the mock's small solid CAB/VERB tag. Returns null (no tag) rather than guessing when unknown —
  * an unenriched older scan may have no preset_kind at all. */
-function kindTag(presetKind: string | null): { label: string; className: string } | null {
-  if (!presetKind) return null
-  const isReverb = /reverb/i.test(presetKind)
+function kindTag(presetKind: string | null, relativePath: string): { label: string; className: string } {
+  // preset_kind is only ever written by IR Lab's own project-import path (labProjectEnrichment.ts)
+  // -- the vast majority of a real library (plain scanned/archived WAVs) never gets it, so falling
+  // back to null-and-hide-the-tag left nearly every row with no tag at all. Folder naming is real
+  // structural evidence the user themselves created (e.g. a "Convolution Reverbs" folder) -- a
+  // reasonable, non-fabricated signal for the rows preset_kind doesn't cover. Defaults to CAB
+  // (the overwhelmingly common case in a guitar-cab IR library) rather than showing nothing.
+  const isReverb = presetKind ? /reverb/i.test(presetKind) : /reverb/i.test(relativePath)
   return isReverb
     ? { label: 'VERB', className: 'bg-teal-600/90 text-white' }
     : { label: 'CAB', className: 'bg-indigo-600/90 text-white' }
@@ -1886,6 +1895,11 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                         <span>Position</span>
                       </div>
                       <span className="flex-shrink-0 w-14 text-right">Size</span>
+                      {/* Matches the trailing favorite/play/play-live icon buttons' reserved width
+                          in each data row below (IR_ROW_ACTIONS_WIDTH) -- without this spacer the
+                          Size header sits at the row's true right edge while the actual size VALUES
+                          sit to the left of those icons, visibly misaligned under a wider header. */}
+                      <span className="flex-shrink-0" style={{ width: IR_ROW_ACTIONS_WIDTH }} />
                     </div>
                   </>
                 )
@@ -1973,16 +1987,14 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 </button>
                 <div className="flex-1 min-w-0 grid items-center gap-3" style={{ gridTemplateColumns: IR_ROW_GRID }}>
                   {(() => {
-                    const tag = kindTag(row.preset_kind)
-                    return tag ? (
+                    const tag = kindTag(row.preset_kind, row.relative_path)
+                    return (
                       <span
                         title={row.preset_kind ?? undefined}
                         className={`justify-self-start px-1.5 h-4 rounded text-[9px] font-bold tracking-wide leading-4 ${tag.className}`}
                       >
                         {tag.label}
                       </span>
-                    ) : (
-                      <span />
                     )
                   })()}
                   <div className="min-w-0 flex flex-col justify-center">
@@ -2014,7 +2026,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                         )}
                       </div>
                     ) : (
-                      <div className="text-sm truncate leading-tight">
+                      <div className="text-[15px] font-medium truncate leading-tight">
                         {row.missing_since && (
                           <span
                             title={`File not found on disk since ${new Date(row.missing_since).toLocaleString()} — click Play to see options`}
@@ -2058,7 +2070,10 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                     icons, colors and hover treatment — faint at rest, growing to a solid filled
                     circle on row hover.
                     Rating stars are deliberately not rendered for now (see setRating's comment):
-                    hidden pending a decision on where they belong, not removed. */}
+                    hidden pending a decision on where they belong, not removed.
+                    Fixed width matches IR_ROW_ACTIONS_WIDTH's header spacer, so the Size column
+                    lines up between header and data regardless of how these buttons render. */}
+                <div className="flex-shrink-0 flex items-center justify-end gap-0" style={{ width: IR_ROW_ACTIONS_WIDTH }}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
@@ -2108,6 +2123,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                     }}
                   />
                 </button>
+                </div>
               </div>
             )
           }}
