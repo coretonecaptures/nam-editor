@@ -419,6 +419,7 @@ const api = {
     sampleRate?: number | number[]
     bitDepth?: number | number[]
     channels?: number
+    kind?: 'cab' | 'reverb'
     sort?: string
     sortDir?: 'asc' | 'desc'
     offset: number
@@ -466,6 +467,7 @@ const api = {
     sampleRate?: number | number[]
     bitDepth?: number | number[]
     channels?: number
+    kind?: 'cab' | 'reverb'
     sort?: string
     sortDir?: 'asc' | 'desc'
   }): Promise<{

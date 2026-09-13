@@ -112,6 +112,13 @@ export interface QueryOptions {
   sampleRate?: number | number[]
   bitDepth?: number | number[]
   channels?: number
+  /** Cab-IR vs reverb-IR, matching design_handoff_ir_prototype's "Type" filter. There is no
+   * reliable `is_reverb` data (the schema column exists but nothing ever writes it) -- same
+   * best-effort classifier the row list's own `kindTag()` (IrModeShell.tsx) uses: IR Lab's
+   * `preset_kind` when present, else a `relative_path` folder-name heuristic ("Convolution
+   * Reverbs" etc. are real, user-created folder names, not fabricated data). Keep both places in
+   * sync if this logic ever changes. */
+  kind?: 'cab' | 'reverb'
   /** Column to sort by — one of SORT_COLUMNS' keys. Anything else (or omitted) falls back to
    * path order, the historical default. `sortDir` defaults to ascending. */
   sort?: string
@@ -337,6 +344,12 @@ function buildWhereAndParams(
     if (values.length === 0) continue
     clauses.push(`(SELECT ${column} FROM ir_item WHERE ir_item.item_id = item.id) IN (${values.map(() => '?').join(',')})`)
     params.push(...values)
+  }
+  if (options.kind != null) {
+    const isReverbSql =
+      `((SELECT preset_kind FROM ir_item WHERE ir_item.item_id = item.id) LIKE '%reverb%' ` +
+      `OR item.relative_path LIKE '%reverb%')`
+    clauses.push(options.kind === 'reverb' ? isReverbSql : `NOT ${isReverbSql}`)
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
 }

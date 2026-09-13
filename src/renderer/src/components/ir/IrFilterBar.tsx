@@ -4,6 +4,22 @@ import { formatSampleRate } from '../../../../shared/wavFormat'
 type FacetField = 'manufacturer' | 'cabinet' | 'speaker' | 'microphone'
 type AudioFacetField = 'sampleRate' | 'bitDepth'
 type MultiselectField = 'manufacturer' | 'speaker' | 'microphone'
+type KindFilter = 'cab' | 'reverb' | null
+
+// Mirrors IrModeShell.tsx's own IR_SORT_KEYS/IR_SORT_LABELS (exported from there too) -- duplicated
+// here rather than imported to avoid a circular module dependency (IrModeShell already imports
+// this file). Keep both lists in sync if the sort vocabulary ever changes.
+const SORT_KEYS = ['name', 'size', 'rate', 'depth', 'duration', 'favorite', 'missing'] as const
+type SortKey = (typeof SORT_KEYS)[number]
+const SORT_LABELS: Record<SortKey, string> = {
+  name: 'Name / path',
+  size: 'File size',
+  rate: 'Sample rate',
+  depth: 'Bit depth',
+  duration: 'Length',
+  favorite: 'Favorites first',
+  missing: 'Missing first'
+}
 
 interface FacetOption {
   value: string
@@ -14,11 +30,38 @@ interface NumericFacetOption {
   count: number
 }
 
-const MULTISELECT_FIELDS: Array<{ field: MultiselectField; label: string; chipClass: string }> = [
-  { field: 'manufacturer', label: 'Makers', chipClass: 'chip-ir-manufacturer' },
-  { field: 'speaker', label: 'Speakers', chipClass: 'chip-ir-speaker' },
-  { field: 'microphone', label: 'Mics', chipClass: 'chip-ir-mic' }
-]
+function Chevron(): React.ReactElement {
+  return (
+    <svg className="w-2.5 h-2.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 9l6 6 6-6" />
+    </svg>
+  )
+}
+
+/** Neutral bordered dropdown button — the mock's "Type All ▾" / "Format All ▾" / "Mic All ▾"
+ * are plain, un-colored controls, not one of this app's tinted `.nam-chip` pills. Getting THESE
+ * three right (not colorful) is as much the point as the row-list de-pilling work was. */
+function FilterDropdownButton({
+  label,
+  active,
+  onClick
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}): React.ReactElement {
+  return (
+    <button
+      onClick={onClick}
+      className={`h-7 px-2.5 rounded border text-xs flex items-center gap-1 flex-shrink-0 ${
+        active ? 'border-nm-accent text-nm-text bg-active-bg' : 'border-field-bd text-nm-text-2 hover:bg-hov'
+      }`}
+    >
+      {label}
+      <Chevron />
+    </button>
+  )
+}
 
 /**
  * Multiselect checklist popover for one descriptive field — same shape as NAM Lab's own column
@@ -29,13 +72,11 @@ const MULTISELECT_FIELDS: Array<{ field: MultiselectField; label: string; chipCl
  */
 function MultiselectFacet({
   label,
-  chipClass,
   options,
   selected,
   onToggle
 }: {
   label: string
-  chipClass: string
   options: FacetOption[]
   selected: string[]
   onToggle: (value: string) => void
@@ -52,21 +93,13 @@ function MultiselectFacet({
     return () => window.removeEventListener('mousedown', dismiss)
   }, [open])
 
-  const active = selected.length > 0
   // Handoff wording: "All" when empty, the option's own label when exactly one is picked,
   // "N selected" when more than one -- not a bare count suffix on the facet's own label.
   const valueLabel = selected.length === 0 ? 'All' : selected.length === 1 ? selected[0] : `${selected.length} selected`
 
   return (
     <div ref={ref} className="relative flex-shrink-0">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className={`nam-chip ${chipClass} ${active ? 'ring-1 ring-nm-accent' : 'opacity-60'}`}
-        title={`Filter by ${label.toLowerCase()}`}
-      >
-        <span className="nam-dot" />
-        {label}: {valueLabel}
-      </button>
+      <FilterDropdownButton label={`${label} ${valueLabel}`} active={selected.length > 0} onClick={() => setOpen((v) => !v)} />
       {open && (
         <div className="absolute left-0 top-full mt-1 w-56 max-h-80 flex flex-col bg-panel border border-nm-border rounded-lg shadow-xl z-50">
           <div className="px-3 py-1.5 text-[10px] font-semibold text-nm-text-3 uppercase tracking-wider border-b border-nm-border flex-shrink-0">
@@ -87,7 +120,7 @@ function MultiselectFacet({
               </label>
             ))}
           </div>
-          {active && (
+          {selected.length > 0 && (
             <div className="border-t border-nm-border px-3 py-1.5 flex-shrink-0">
               <button onClick={() => selected.forEach((v) => onToggle(v))} className="text-xs text-nm-accent hover:underline">
                 Clear
@@ -100,16 +133,152 @@ function MultiselectFacet({
   )
 }
 
+/** "Format" — sample rate + bit depth consolidated into ONE dropdown (the mock has no separate
+ * pill-per-value row for these; a real library still legitimately mixes several of each, so this
+ * stays a multiselect checklist, just with both dimensions in one popover instead of two rows of
+ * loose toggle pills). */
+function FormatFacet({
+  sampleRates,
+  bitDepths,
+  selectedRates,
+  selectedDepths,
+  onToggleRate,
+  onToggleDepth
+}: {
+  sampleRates: NumericFacetOption[]
+  bitDepths: NumericFacetOption[]
+  selectedRates: number[]
+  selectedDepths: number[]
+  onToggleRate: (v: number) => void
+  onToggleDepth: (v: number) => void
+}): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const dismiss = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', dismiss)
+    return () => window.removeEventListener('mousedown', dismiss)
+  }, [open])
+
+  const selectedLabels = [...selectedRates.map(formatSampleRate), ...selectedDepths.map((d) => `${d}-bit`)]
+  const valueLabel = selectedLabels.length === 0 ? 'All' : selectedLabels.length === 1 ? selectedLabels[0] : `${selectedLabels.length} selected`
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <FilterDropdownButton label={`Format ${valueLabel}`} active={selectedLabels.length > 0} onClick={() => setOpen((v) => !v)} />
+      {open && (
+        <div className="absolute left-0 top-full mt-1 w-52 max-h-96 flex flex-col bg-panel border border-nm-border rounded-lg shadow-xl z-50">
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-nm-text-3 uppercase tracking-wider border-b border-nm-border flex-shrink-0">
+            Format
+          </div>
+          <div className="overflow-y-auto flex-1 py-1">
+            <div className="px-3 pt-1.5 pb-0.5 text-[10px] text-nm-text-3 uppercase tracking-wide">Sample rate</div>
+            {sampleRates.length === 0 && <div className="px-3 py-1 text-xs text-nm-text-3">—</div>}
+            {sampleRates.map((o) => (
+              <label key={`rate-${o.value}`} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-hov">
+                <input
+                  type="checkbox"
+                  checked={selectedRates.includes(o.value)}
+                  onChange={() => onToggleRate(o.value)}
+                  className="w-3.5 h-3.5 rounded border-field-bd text-nm-accent focus:ring-0 cursor-pointer flex-shrink-0"
+                />
+                <span className="flex-1 min-w-0 truncate text-nm-text">{formatSampleRate(o.value)}</span>
+                <span className="text-nm-text-3 flex-shrink-0">{o.count}</span>
+              </label>
+            ))}
+            <div className="px-3 pt-2 pb-0.5 text-[10px] text-nm-text-3 uppercase tracking-wide border-t border-nm-border-s mt-1">Bit depth</div>
+            {bitDepths.length === 0 && <div className="px-3 py-1 text-xs text-nm-text-3">—</div>}
+            {bitDepths.map((o) => (
+              <label key={`depth-${o.value}`} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-hov">
+                <input
+                  type="checkbox"
+                  checked={selectedDepths.includes(o.value)}
+                  onChange={() => onToggleDepth(o.value)}
+                  className="w-3.5 h-3.5 rounded border-field-bd text-nm-accent focus:ring-0 cursor-pointer flex-shrink-0"
+                />
+                <span className="flex-1 min-w-0 truncate text-nm-text">{o.value}-bit</span>
+                <span className="text-nm-text-3 flex-shrink-0">{o.count}</span>
+              </label>
+            ))}
+          </div>
+          {selectedLabels.length > 0 && (
+            <div className="border-t border-nm-border px-3 py-1.5 flex-shrink-0">
+              <button
+                onClick={() => {
+                  selectedRates.forEach(onToggleRate)
+                  selectedDepths.forEach(onToggleDepth)
+                }}
+                className="text-xs text-nm-accent hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** "Type" — cab vs reverb (design_handoff_ir_prototype's new facet). Mutually exclusive, so a
+ * plain 3-way single-select (All/Cab/Reverb) rather than a checklist. Uses the SAME classification
+ * IrModeShell.tsx's own kindTag() and queryLibrary.ts's `kind` query option use (preset_kind when
+ * IR Lab wrote it, else a folder-name heuristic) -- this filter and the row's own CAB/VERB tag can
+ * never disagree with each other. */
+function TypeFacet({ value, onChange }: { value: KindFilter; onChange: (v: KindFilter) => void }): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const dismiss = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', dismiss)
+    return () => window.removeEventListener('mousedown', dismiss)
+  }, [open])
+
+  const valueLabel = value === 'cab' ? 'Cab' : value === 'reverb' ? 'Reverb' : 'All'
+  const options: Array<{ v: KindFilter; label: string }> = [
+    { v: null, label: 'All' },
+    { v: 'cab', label: 'Cab' },
+    { v: 'reverb', label: 'Reverb' }
+  ]
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <FilterDropdownButton label={`Type ${valueLabel}`} active={value != null} onClick={() => setOpen((v) => !v)} />
+      {open && (
+        <div className="absolute left-0 top-full mt-1 w-40 bg-panel border border-nm-border rounded-lg shadow-xl z-50 py-1">
+          {options.map((o) => (
+            <button
+              key={o.label}
+              onClick={() => {
+                onChange(o.v)
+                setOpen(false)
+              }}
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-hov ${value === o.v ? 'text-nm-accent' : 'text-nm-text'}`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
- * Search/filter bar for the browse list — deliberately scoped to sit above the CENTER list column
- * only, not spanning the folder tree or the right panel, matching where NAM Lab's own equivalent
- * (FileList.tsx's search+filter row) lives: inside the file list component, not a page-wide header.
- *
- * Quick filters: sample rate / bit depth (multi-select toggle pills, since a library legitimately
- * mixes 44.1k/48k/96k content someone might want together), Favorites/Rated (existing single
- * toggles), Groups (existing single-select dropdown, unchanged), and three NEW multiselect
- * checklists — manufacturer/speaker/microphone — populated from what's actually in the current
- * library scope rather than a fixed global vocabulary list.
+ * Search/filter bar for the browse list, restyled to match design_handoff_ir_prototype's mock:
+ * a plain "SEARCH" row (big, un-boxed search input, amber eyebrow label, result count) over a
+ * "FILTER" row (Type/Format/Mic dropdowns, "SORT" control at the right) -- deliberately sparser
+ * than the old bordered-input + wall-of-pills layout. Favorites/Rated/Groups/Makers/Speakers keep
+ * their full working capability (nothing removed) but sit in a smaller secondary row underneath,
+ * since none of the mock's three screenshots show a control for them.
  */
 export function IrFilterBar({
   search,
@@ -128,6 +297,14 @@ export function IrFilterBar({
   onToggleFacet,
   onToggleAudioFacet,
   onClearAll,
+  kindFilter,
+  onSetKindFilter,
+  total,
+  sortKey,
+  sortDir,
+  onSetSort,
+  onToggleSortDir,
+  showSort,
   refreshKey
 }: {
   search: string
@@ -146,6 +323,14 @@ export function IrFilterBar({
   onToggleFacet: (field: FacetField, value: string) => void
   onToggleAudioFacet: (field: AudioFacetField, value: number) => void
   onClearAll: () => void
+  kindFilter: KindFilter
+  onSetKindFilter: (v: KindFilter) => void
+  total: number
+  sortKey: SortKey
+  sortDir: 'asc' | 'desc'
+  onSetSort: (k: SortKey) => void
+  onToggleSortDir: () => void
+  showSort: boolean
   refreshKey: number
 }): React.ReactElement {
   const [groupsOpen, setGroupsOpen] = useState(false)
@@ -193,6 +378,7 @@ export function IrFilterBar({
     favoritesOnly ||
     ratedOnly ||
     tagFilterId != null ||
+    kindFilter != null ||
     Object.values(facets).some((v) => (Array.isArray(v) ? v.length > 0 : v != null)) ||
     Object.values(audioFacets).some((v) => Array.isArray(v) && v.length > 0)
 
@@ -204,50 +390,99 @@ export function IrFilterBar({
 
   return (
     <div className="border-b border-nm-border flex-shrink-0">
-      <div className="px-3 pt-2 pb-1.5 flex items-center gap-1.5">
-        <div className="relative flex-1 min-w-0 max-w-md">
-          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-nm-text-3 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search IRs…"
-            title="Searches filename, manufacturer, cabinet, speaker, microphone and audio format"
-            className="w-full pl-7 pr-7 py-1.5 bg-field-bg border border-field-bd rounded-md text-xs text-nm-text placeholder-nm-text-3 focus:outline-none focus:border-nm-accent transition-colors"
-          />
-          {search && (
-            <button
-              onClick={() => onSearchChange('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-nm-text-3 hover:text-nm-text"
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
+      {/* SEARCH row — plain, un-boxed, the single largest text element on the page per the handoff. */}
+      <div className="flex items-center gap-3 px-4 pt-2.5 pb-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ir-label-amber)] flex-shrink-0">
+          Search
+        </span>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="mic, speaker, maker, filename, format…"
+          title="Searches filename, manufacturer, cabinet, speaker, microphone and audio format"
+          className="flex-1 min-w-0 bg-transparent text-[21px] font-light text-nm-text placeholder-nm-text-3 focus:outline-none"
+        />
+        {search && (
+          <button onClick={() => onSearchChange('')} className="text-nm-text-3 hover:text-nm-text flex-shrink-0" title="Clear search">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
+        <span className="text-xs text-[color:var(--ir-muted)] flex-shrink-0 tabular-nums">{total.toLocaleString()}</span>
       </div>
 
-      {/* All quick filters in one wrapping row, same idiom as NAM Lab's FileList.tsx filter row. */}
-      <div className="px-3 pb-2 flex gap-1.5 flex-wrap items-center">
+      {/* FILTER row — Type / Format / Mic, Sort at the right. */}
+      <div className="flex items-center gap-2 px-4 pb-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ir-label-amber)] flex-shrink-0">
+          Filter
+        </span>
+        <TypeFacet value={kindFilter} onChange={onSetKindFilter} />
+        <FormatFacet
+          sampleRates={sampleRates}
+          bitDepths={bitDepths}
+          selectedRates={audioFacets.sampleRate ?? []}
+          selectedDepths={audioFacets.bitDepth ?? []}
+          onToggleRate={(v) => onToggleAudioFacet('sampleRate', v)}
+          onToggleDepth={(v) => onToggleAudioFacet('bitDepth', v)}
+        />
+        <MultiselectFacet
+          label="Mic"
+          options={multiselectState.microphone.options}
+          selected={multiselectState.microphone.selected}
+          onToggle={(v) => onToggleFacet('microphone', v)}
+        />
+        {hasActiveFilters && (
+          <button onClick={onClearAll} className="text-xs text-nm-accent hover:underline ml-1 flex-shrink-0">
+            Clear all
+          </button>
+        )}
+        {showSort && (
+          <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--ir-label-amber)]">Sort</span>
+            <select
+              value={sortKey}
+              onChange={(e) => onSetSort(e.target.value as SortKey)}
+              title="Sort the IR list"
+              className="text-xs px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2"
+            >
+              {SORT_KEYS.map((k) => (
+                <option key={k} value={k}>
+                  {SORT_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={onToggleSortDir}
+              title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+              className="text-xs px-1.5 py-1 rounded-r border border-l-0 border-field-bd text-nm-text-2 hover:bg-hov"
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Secondary row — Favorites/Rated/Groups/Makers/Speakers. None of the mock's 3 screenshots
+          show a control for these, but nothing here gets removed, only demoted below the primary
+          Type/Format/Mic row. Kept visually quiet (chip-force-minimal) rather than colorful pills. */}
+      <div className="flex items-center gap-1.5 px-4 pb-2 flex-wrap">
         <button
           onClick={onToggleFavoritesOnly}
-          className={`nam-chip ${favoritesOnly ? 'chip-ir-manufacturer' : 'chip-ir-neutral opacity-60'}`}
+          className={`nam-chip chip-force-minimal chip-ir-manufacturer ${favoritesOnly ? '' : 'opacity-60'}`}
         >
           <span className="nam-dot" />★ Favorites
         </button>
-        <button onClick={onToggleRatedOnly} className={`nam-chip ${ratedOnly ? 'chip-ir-manufacturer' : 'chip-ir-neutral opacity-60'}`}>
+        <button onClick={onToggleRatedOnly} className={`nam-chip chip-force-minimal chip-ir-manufacturer ${ratedOnly ? '' : 'opacity-60'}`}>
           <span className="nam-dot" />
           Rated
         </button>
-
         {tags.length > 0 && (
           <div ref={groupsRef} className="relative flex-shrink-0">
             <button
               onClick={() => setGroupsOpen((v) => !v)}
-              className={`nam-chip chip-ir-cabinet ${tagFilterId != null ? '' : 'opacity-60'}`}
+              className={`nam-chip chip-force-minimal chip-ir-cabinet ${tagFilterId != null ? '' : 'opacity-60'}`}
             >
               <span className="nam-dot" />
               {tagFilterId != null ? tags.find((t) => t.id === tagFilterId)?.name ?? 'Group' : 'Groups'} ▾
@@ -282,55 +517,18 @@ export function IrFilterBar({
             )}
           </div>
         )}
-
-        {/* Sample rate / bit depth — multi-select toggle pills rather than a dropdown, since the
-            set of values in a real library is small (typically 2-4 rates) and seeing them all at
-            once as clickable pills is faster than opening a list to pick one. */}
-        {sampleRates.map((o) => {
-          const isActive = audioFacets.sampleRate?.includes(o.value) ?? false
-          return (
-            <button
-              key={`rate-${o.value}`}
-              onClick={() => onToggleAudioFacet('sampleRate', o.value)}
-              title={`${o.count} IR${o.count === 1 ? '' : 's'} at ${formatSampleRate(o.value)}`}
-              className={`nam-chip chip-ir-rate ${isActive ? 'ring-1 ring-nm-accent' : 'opacity-60'}`}
-            >
-              <span className="nam-dot" />
-              {formatSampleRate(o.value)}
-            </button>
-          )
-        })}
-        {bitDepths.map((o) => {
-          const isActive = audioFacets.bitDepth?.includes(o.value) ?? false
-          return (
-            <button
-              key={`depth-${o.value}`}
-              onClick={() => onToggleAudioFacet('bitDepth', o.value)}
-              title={`${o.count} IR${o.count === 1 ? '' : 's'} at ${o.value}-bit`}
-              className={`nam-chip chip-ir-depth ${isActive ? 'ring-1 ring-nm-accent' : 'opacity-60'}`}
-            >
-              <span className="nam-dot" />
-              {o.value}-bit
-            </button>
-          )
-        })}
-
-        {MULTISELECT_FIELDS.map(({ field, label, chipClass }) => (
-          <MultiselectFacet
-            key={field}
-            label={label}
-            chipClass={chipClass}
-            options={multiselectState[field].options}
-            selected={multiselectState[field].selected}
-            onToggle={(value) => onToggleFacet(field, value)}
-          />
-        ))}
-
-        {hasActiveFilters && (
-          <button onClick={onClearAll} className="text-xs text-nm-accent hover:underline ml-1">
-            Clear all
-          </button>
-        )}
+        <MultiselectFacet
+          label="Makers"
+          options={multiselectState.manufacturer.options}
+          selected={multiselectState.manufacturer.selected}
+          onToggle={(v) => onToggleFacet('manufacturer', v)}
+        />
+        <MultiselectFacet
+          label="Speakers"
+          options={multiselectState.speaker.options}
+          selected={multiselectState.speaker.selected}
+          onToggle={(v) => onToggleFacet('speaker', v)}
+        />
       </div>
     </div>
   )

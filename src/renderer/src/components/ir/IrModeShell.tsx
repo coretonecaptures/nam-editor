@@ -89,9 +89,9 @@ const IR_ROW_ACTIONS_WIDTH = 116
 const PAGE_SIZE = 200
 
 const IR_SORT_LS_KEY = 'nam-lab-ir-sort'
-const IR_SORT_KEYS = ['name', 'size', 'rate', 'depth', 'duration', 'favorite', 'missing'] as const
-type IrSortKey = (typeof IR_SORT_KEYS)[number]
-const IR_SORT_LABELS: Record<IrSortKey, string> = {
+export const IR_SORT_KEYS = ['name', 'size', 'rate', 'depth', 'duration', 'favorite', 'missing'] as const
+export type IrSortKey = (typeof IR_SORT_KEYS)[number]
+export const IR_SORT_LABELS: Record<IrSortKey, string> = {
   name: 'Name / path',
   size: 'File size',
   rate: 'Sample rate',
@@ -270,6 +270,9 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // for the same reason as manufacturer/speaker/microphone above — the filter bar's quick pills
   // are multi-select ("44.1k or 48k"), not a single radio choice.
   const [audioFacets, setAudioFacets] = useState<{ sampleRate?: number[]; bitDepth?: number[] }>({})
+  // design_handoff_ir_prototype's "Type" filter -- cab vs reverb, see queryLibrary.ts's own kind
+  // option doc comment for why this can't be a precise facet (no is_reverb data ever gets written).
+  const [kindFilter, setKindFilter] = useState<'cab' | 'reverb' | null>(null)
   const toggleAudioFacet = useCallback((field: 'sampleRate' | 'bitDepth', value: number) => {
     setAudioFacets((prev) => {
       const current = prev[field] ?? []
@@ -1029,6 +1032,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           tagId: tagFilterId ?? undefined,
           ...facets,
           ...audioFacets,
+          kind: kindFilter ?? undefined,
           sort: sortKey,
           sortDir,
           offset: pageStart,
@@ -1044,7 +1048,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           pendingRef.current.delete(key)
         })
     },
-    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId, sortKey, sortDir]
+    [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, selectedRootId, sortKey, sortDir]
   )
 
   // Fires once per search/folder/filter change to establish `total` even before the list scrolls
@@ -1062,6 +1066,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         tagId: tagFilterId ?? undefined,
         ...facets,
         ...audioFacets,
+        kind: kindFilter ?? undefined,
         sort: sortKey,
         sortDir,
         offset: 0,
@@ -1073,7 +1078,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         res.rows.forEach((row, i) => cacheRef.current.set(i, row))
         forceRerender((n) => n + 1)
       })
-  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, selectedRootId, sortKey, sortDir])
+  }, [search, roots.length, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, selectedRootId, sortKey, sortDir])
 
   // Spreadsheet export (B6) — the SAME filter scope the current view is showing, not just the
   // loaded page window (queryForExport re-runs the query with no LIMIT, up to its own hard cap).
@@ -1092,6 +1097,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           tagId: tagFilterId ?? undefined,
           ...facets,
           ...audioFacets,
+          kind: kindFilter ?? undefined,
           sort: sortKey,
           sortDir
         })
@@ -1105,7 +1111,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         setExporting(false)
       }
     },
-    [selectedRootId, search, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, sortKey, sortDir]
+    [selectedRootId, search, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, sortKey, sortDir]
   )
 
   // Same filter shape queryItems() takes (minus offset/limit) — the one payload both export and
@@ -1120,10 +1126,11 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       tagId: tagFilterId ?? undefined,
       ...facets,
       ...audioFacets,
+      kind: kindFilter ?? undefined,
       sort: sortKey,
       sortDir
     }),
-    [selectedRootId, selectedFolderId, search, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, sortKey, sortDir]
+    [selectedRootId, selectedFolderId, search, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, sortKey, sortDir]
   )
 
   const applySavedSearch = useCallback((filterJson: string) => {
@@ -1142,6 +1149,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     setTagFilterId(parsed.tagId ?? null)
     setFacets({ manufacturer: parsed.manufacturer, cabinet: parsed.cabinet, speaker: parsed.speaker, microphone: parsed.microphone })
     setAudioFacets({ sampleRate: parsed.sampleRate, bitDepth: parsed.bitDepth })
+    setKindFilter((parsed.kind as 'cab' | 'reverb' | undefined) ?? null)
     setSortKey((parsed.sort as IrSortKey) ?? 'name')
     setSortDir(parsed.sortDir ?? 'asc')
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1520,29 +1528,6 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             </button>
           </div>
         )}
-        {hasAnyRoot && irListView === 'list' && (
-          <div className="flex items-center flex-shrink-0">
-            <select
-              value={sortKey}
-              onChange={(e) => setSort(e.target.value as IrSortKey)}
-              title="Sort the IR list"
-              className="text-xs px-1.5 py-1 rounded-l border border-field-bd bg-field-bg text-nm-text-2"
-            >
-              {IR_SORT_KEYS.map((k) => (
-                <option key={k} value={k}>
-                  Sort: {IR_SORT_LABELS[k]}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-              title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
-              className="text-xs px-1.5 py-1 rounded-r border border-l-0 border-field-bd text-nm-text-2 hover:bg-hov"
-            >
-              {sortDir === 'asc' ? '↑' : '↓'}
-            </button>
-          </div>
-        )}
         {roots.length > 1 && (
           <select
             value={selectedRootId ?? ''}
@@ -1800,10 +1785,19 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
               onClearAll={() => {
                 setFacets({})
                 setAudioFacets({})
+                setKindFilter(null)
                 setFavoritesOnly(false)
                 setRatedOnly(false)
                 setTagFilterId(null)
               }}
+              kindFilter={kindFilter}
+              onSetKindFilter={setKindFilter}
+              total={total}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSetSort={setSort}
+              onToggleSortDir={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              showSort={irListView === 'list'}
               refreshKey={requestEpochRef.current}
             />
             {irListView === 'grid' ? (

@@ -390,6 +390,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         sampleRate?: number | number[]
         bitDepth?: number | number[]
         channels?: number
+        kind?: 'cab' | 'reverb'
         sort?: string
         sortDir?: 'asc' | 'desc'
         offset: number
@@ -436,6 +437,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
         sampleRate?: number | number[]
         bitDepth?: number | number[]
         channels?: number
+        kind?: 'cab' | 'reverb'
         sort?: string
         sortDir?: 'asc' | 'desc'
       }
