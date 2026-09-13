@@ -137,7 +137,7 @@ function FieldBadge({
                   ? 'inherited from the IR Lab Project'
                   : 'unknown source'
       }) — click to filter`}
-      className={`nam-chip ${FIELD_CHIP_CLASS[field]} flex-shrink-0 ${isGuess ? 'opacity-60' : ''} ${
+      className={`nam-chip chip-force-minimal ${FIELD_CHIP_CLASS[field]} flex-shrink-0 ${isGuess ? 'opacity-60' : ''} ${
         active ? 'ring-1 ring-nm-accent' : ''
       }`}
     >
@@ -1992,7 +1992,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                     <div className="flex items-center gap-1 overflow-hidden">
                       {row.missing_since && (
                         <span
-                          className="nam-chip chip-ir-missing flex-shrink-0"
+                          className="nam-chip chip-force-minimal chip-ir-missing flex-shrink-0"
                           title={`File not found on disk since ${new Date(row.missing_since).toLocaleString()} — click Play to see options`}
                         >
                           <span className="nam-dot" />
@@ -2006,7 +2006,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                             toggleAudioFacet('sampleRate', row.sample_rate!)
                           }}
                           title="Filter to this sample rate"
-                          className={`nam-chip chip-ir-rate flex-shrink-0 ${audioFacets.sampleRate?.includes(row.sample_rate!) ? 'ring-1 ring-nm-accent' : ''}`}
+                          className={`nam-chip chip-force-minimal chip-ir-rate flex-shrink-0 ${audioFacets.sampleRate?.includes(row.sample_rate!) ? 'ring-1 ring-nm-accent' : ''}`}
                         >
                           <span className="nam-dot" />
                           {formatSampleRate(row.sample_rate)}
@@ -2019,20 +2019,20 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                             toggleAudioFacet('bitDepth', row.bit_depth!)
                           }}
                           title="Filter to this bit depth"
-                          className={`nam-chip chip-ir-depth flex-shrink-0 ${audioFacets.bitDepth?.includes(row.bit_depth!) ? 'ring-1 ring-nm-accent' : ''}`}
+                          className={`nam-chip chip-force-minimal chip-ir-depth flex-shrink-0 ${audioFacets.bitDepth?.includes(row.bit_depth!) ? 'ring-1 ring-nm-accent' : ''}`}
                         >
                           <span className="nam-dot" />
                           {row.bit_depth}-bit
                         </button>
                       ) : null}
                       {row.channels ? (
-                        <span className="nam-chip chip-ir-channels flex-shrink-0">
+                        <span className="nam-chip chip-force-minimal chip-ir-channels flex-shrink-0">
                           <span className="nam-dot" />
                           {row.channels === 1 ? 'mono' : row.channels === 2 ? 'stereo' : `${row.channels}ch`}
                         </span>
                       ) : null}
                       {row.duration_seconds ? (
-                        <span className="nam-chip chip-ir-length flex-shrink-0">
+                        <span className="nam-chip chip-force-minimal chip-ir-length flex-shrink-0">
                           <span className="nam-dot" />
                           {row.duration_seconds.toFixed(2)}s
                         </span>
