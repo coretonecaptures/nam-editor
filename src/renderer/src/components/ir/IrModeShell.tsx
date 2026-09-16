@@ -2615,7 +2615,12 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
               <IrMultiSelectEditor
                 itemIds={[...selectedIds]}
                 onSaved={invalidateAndRefetch}
-                skipConfirmation={settings.skipBatchEditConfirmation === true}
+                // appSettings, not the `settings` const above — that one is a one-time snapshot of
+                // window.api.initialSettings taken at preload/mount and never updates again this
+                // session, so toggling "Skip Batch Edit confirmation" in Settings and saving
+                // wouldn't take effect until the app restarted. appSettings is the live React
+                // state SettingsPanel's onSave actually updates.
+                skipConfirmation={appSettings.skipBatchEditConfirmation === true}
                 embedBusy={embedBatchBusy}
                 embedMessage={embedBatchMessage}
                 onEmbed={() => void embedSelectionInFiles()}

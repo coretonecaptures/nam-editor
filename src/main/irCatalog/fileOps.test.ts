@@ -236,6 +236,30 @@ describe.skipIf(!hasFts5())('fileOps', () => {
       expect(fs.existsSync(join(root, 'PackA', 'One.wav'))).toBe(true)
       expect(fs.existsSync(join(root, 'PackA', 'First.wav'))).toBe(false)
     })
+
+    it('two items in the same batch resolving to the same new name abort the batch, even with force — never deletes one for the other', async () => {
+      const { db, root } = await setUpLibraryMulti()
+      const one = itemIdFor(db, 'One.wav')
+      const two = itemIdFor(db, 'Two.wav')
+      const three = itemIdFor(db, 'Three.wav')
+
+      const results = await renameItemsBatch(
+        db,
+        [
+          { itemId: one, newBaseName: 'Same' },
+          { itemId: two, newBaseName: 'Same' },
+          { itemId: three, newBaseName: 'Third' }
+        ],
+        true // force=true is exactly the case that could otherwise let the second rename
+             // silently unlink the file the first rename in this batch just produced.
+      )
+      expect(results.every((r) => !r.success)).toBe(true)
+      // Nothing touched — all three original files still exist, none renamed to "Same.wav".
+      expect(fs.existsSync(join(root, 'PackA', 'One.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Two.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Three.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Same.wav'))).toBe(false)
+    })
   })
 
   it('refuses to operate on an item marked missing_since', async () => {

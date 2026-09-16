@@ -56,11 +56,26 @@ export function buildBwfDescription(fields: BwfEmbedFields): string {
   return parts.join(' | ')
 }
 
+/** Truncates to at most `maxBytes` once UTF-8 encoded, without splitting a multi-byte character —
+ * a plain `text.slice(0, maxBytes)` truncates by UTF-16 code unit count, not byte count, so any
+ * non-ASCII text (an umlaut, a curly quote, non-Latin script) could re-encode to MORE than
+ * maxBytes and get silently cut mid-character by the fixed-width copy in buildBextBody below. */
+function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
+  let end = text.length
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), 'utf8') > maxBytes) end--
+  return text.slice(0, end)
+}
+
 function buildBextBody(descriptionAlreadyTruncated: string): Buffer {
   const body = Buffer.alloc(BEXT_BODY_SIZE) // zero-filled; every field this app doesn't set (dates, UMID, loudness, ...) stays zero, same as an unset/blank field elsewhere in this chunk
-  const descBuf = Buffer.from(descriptionAlreadyTruncated, 'ascii')
+  // UTF-8, not 'ascii': Node's 'ascii' encoding silently masks the high bit of every code unit
+  // instead of erroring or transcoding, corrupting any non-ASCII character (an umlaut, a curly
+  // quote pasted from macOS, non-Latin script) with no warning. UTF-8 is byte-identical to ASCII
+  // for the common case and at least encodes everything else correctly instead of mangling it.
+  const descBuf = Buffer.from(descriptionAlreadyTruncated, 'utf8')
   descBuf.copy(body, DESC_OFFSET, 0, Math.min(descBuf.length, DESC_LEN))
-  const origBuf = Buffer.from(ORIGINATOR, 'ascii')
+  const origBuf = Buffer.from(ORIGINATOR, 'utf8') // ORIGINATOR is a fixed ASCII literal — utf8 and ascii agree here
   origBuf.copy(body, ORIG_OFFSET, 0, Math.min(origBuf.length, ORIG_LEN))
   return body
 }
@@ -80,8 +95,8 @@ const HEADER_READ_CAP = 8 * 1024 * 1024
 
 export function embedBwfMetadata(absPath: string, fields: BwfEmbedFields): EmbedResult {
   const rawDescription = buildBwfDescription(fields)
-  const truncatedDescription = rawDescription.length > DESC_LEN
-  const description = rawDescription.slice(0, DESC_LEN)
+  const description = truncateUtf8Bytes(rawDescription, DESC_LEN)
+  const truncatedDescription = description !== rawDescription
   const newBody = buildBextBody(description)
 
   let fd: number | undefined
@@ -150,19 +165,34 @@ export function embedBwfMetadata(absPath: string, fields: BwfEmbedFields): Embed
     const tmpPath = `${absPath}.embedtmp`
     const outFd = fs.openSync(tmpPath, 'w')
     try {
+      // Every write below passes an EXPLICIT position and this app tracks `writePos` itself,
+      // rather than ever relying on "current position" (omitting `position`, or passing
+      // null/undefined). Node's fs.writeSync uses pwrite when a position is given, which does
+      // NOT advance the fd's underlying file offset the way a normal sequential write does — so
+      // mixing an explicit-position write with a following position-omitted write silently
+      // restarts at wherever the fd's offset last was (usually 0 right after openSync), clobbering
+      // everything written so far. That exact mix here corrupted the RIFF header on every
+      // full-rewrite embed (caught by wavMetadataWriter.test.ts, added alongside this fix — a
+      // previously untested path).
+      let writePos = 0
+      const writeAt = (source: Buffer, sourceStart: number, length: number): void => {
+        if (length <= 0) return
+        fs.writeSync(outFd, source, sourceStart, length, writePos)
+        writePos += length
+      }
       // RIFF header (12 bytes) — the size field (bytes 4-8) gets patched once the final size is
       // known, after this file is fully written.
-      fs.writeSync(outFd, buf, 0, 12, 0)
+      writeAt(buf, 0, 12)
       // fmt chunk (and anything preceding it, in the unusual case something does) verbatim.
-      fs.writeSync(outFd, buf, 12, fmtEnd - 12)
-      fs.writeSync(outFd, newBextChunk)
+      writeAt(buf, 12, fmtEnd - 12)
+      writeAt(newBextChunk, 0, newBextChunk.length)
       // Every remaining chunk between fmt and data EXCEPT the old bext (if present), verbatim.
       if (bextOffset !== -1) {
-        if (bextOffset > fmtEnd) fs.writeSync(outFd, buf, fmtEnd, bextOffset - fmtEnd)
+        if (bextOffset > fmtEnd) writeAt(buf, fmtEnd, bextOffset - fmtEnd)
         const afterOldBext = bextOffset + 8 + bextChunkSize + (bextChunkSize % 2)
-        if (dataOffset > afterOldBext) fs.writeSync(outFd, buf, afterOldBext, dataOffset - afterOldBext)
+        if (dataOffset > afterOldBext) writeAt(buf, afterOldBext, dataOffset - afterOldBext)
       } else {
-        fs.writeSync(outFd, buf, fmtEnd, dataOffset - fmtEnd)
+        writeAt(buf, fmtEnd, dataOffset - fmtEnd)
       }
       // The data chunk and everything after it (the actual audio) — streamed straight from the
       // original file, never loaded into memory regardless of how large the IR is.
@@ -173,7 +203,7 @@ export function embedBwfMetadata(absPath: string, fields: BwfEmbedFields): Embed
         const toRead = Math.min(CHUNK, stat.size - pos)
         const read = fs.readSync(fd, tail, 0, toRead, pos)
         if (read <= 0) break
-        fs.writeSync(outFd, tail, 0, read)
+        writeAt(tail, 0, read)
         pos += read
       }
     } finally {

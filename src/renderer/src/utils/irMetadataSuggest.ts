@@ -1,12 +1,13 @@
-import { IR_METADATA_SUGGEST_FIELD_OPTIONS, IrMetadataSuggestField, IrMetadataSuggestRule, MetadataSuggestMatchType } from '../types/settings'
+import { IR_METADATA_SUGGEST_FIELD_OPTIONS, IrMetadataSuggestField, IrMetadataSuggestRule } from '../types/settings'
+import { extractTokens, extractSegments, matchByType, normalizePath } from './suggestMatching'
 
 /**
  * IR filename metadata suggestion engine (parity backlog item 20) — matching/templating core
- * adapted from `utils/metadataSuggest.ts` (NAM mode's rule engine), trimmed for IR's simpler shape:
- * one candidate text (filename) plus folder path, no capture-name/filename dual-candidate logic,
- * no scoped rule sets, no numeric field coercion (every IR field here is a plain string). See
- * `types/settings.ts`'s own comment on `IrMetadataSuggestRule` for why these aren't the same types
- * as NAM's engine.
+ * SHARED with `utils/metadataSuggest.ts` (NAM mode's rule engine) via `suggestMatching.ts`, wired
+ * around IR's simpler shape: one candidate text (filename) plus folder path, no capture-name/
+ * filename dual-candidate logic, no scoped rule sets, no numeric field coercion (every IR field
+ * here is a plain string). See `types/settings.ts`'s own comment on `IrMetadataSuggestRule` for
+ * why these aren't the same RULE types as NAM's engine even though the matching core is shared.
  */
 
 export interface IrSuggestionTarget {
@@ -33,78 +34,6 @@ export interface IrMetadataSuggestionMatch {
 const FIELD_LABELS: Record<IrMetadataSuggestField, string> = Object.fromEntries(
   IR_METADATA_SUGGEST_FIELD_OPTIONS.map((o) => [o.value, o.label])
 ) as Record<IrMetadataSuggestField, string>
-
-function compact(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function extractTokens(text: string): Set<string> {
-  const matches = text.toLowerCase().match(/[a-z0-9]+/g) ?? []
-  return new Set(matches)
-}
-
-function extractSegments(text: string): string[] {
-  return text.split(/\s+/).map((s) => s.trim()).filter(Boolean)
-}
-
-function matchesToken(raw: string, tokens: Set<string>, token: string): boolean {
-  const trimmed = token.trim().toLowerCase()
-  if (!trimmed) return false
-  const compactToken = compact(trimmed)
-  if (!compactToken) return false
-  if (tokens.has(compactToken)) return true
-  const rawLower = raw.toLowerCase()
-  if (trimmed.includes(' ') || trimmed.includes('-') || trimmed.includes('_')) {
-    return rawLower.includes(trimmed) || compact(rawLower).includes(compactToken)
-  }
-  if (compactToken.length <= 3) {
-    const boundary = new RegExp(`(^|[^a-z0-9])${compactToken}([^a-z0-9]|$)`, 'i')
-    return boundary.test(rawLower)
-  }
-  return rawLower.includes(trimmed) || compact(rawLower).includes(compactToken)
-}
-
-interface MatchResult {
-  matched: boolean
-  extractedValue?: string
-  extractedMatch?: string
-}
-
-function matchByType(raw: string, tokens: Set<string>, token: string, matchType: MetadataSuggestMatchType): MatchResult {
-  const trimmed = token.trim()
-  const rawLower = raw.toLowerCase()
-  const trimmedLower = trimmed.toLowerCase()
-  const compactToken = compact(trimmedLower)
-  const compactRaw = compact(rawLower)
-  if (!trimmed) return { matched: false }
-
-  switch (matchType) {
-    case 'contains':
-      return { matched: rawLower.includes(trimmedLower) || compactRaw.includes(compactToken) }
-    case 'starts_with':
-      return { matched: rawLower.startsWith(trimmedLower) || compactRaw.startsWith(compactToken) }
-    case 'ends_with':
-      return { matched: rawLower.endsWith(trimmedLower) || compactRaw.endsWith(compactToken) }
-    case 'prefix_value': {
-      const escaped = escapeRegExp(trimmed)
-      const regex = new RegExp(`(^|[^a-z0-9])(${escaped})([0-9]+(?:\\.[0-9]+)?)($|[^a-z0-9])`, 'i')
-      const match = raw.match(regex)
-      if (!match) return { matched: false }
-      return { matched: true, extractedValue: match[3], extractedMatch: `${match[2]}${match[3]}` }
-    }
-    case 'exact':
-    default:
-      return { matched: matchesToken(raw, tokens, trimmed) }
-  }
-}
-
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, '/')
-}
 
 function baseNameOf(relativePath: string): string {
   const name = relativePath.split('/').pop() ?? relativePath

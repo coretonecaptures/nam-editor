@@ -45,12 +45,17 @@ const BEXT_ORIGINATOR_OFFSET = 256
 const BEXT_ORIGINATOR_LENGTH = 32
 
 /** BWF string fields are fixed-width, right-padded with NUL bytes — trim at the first NUL rather
- * than reading the full fixed width, which would otherwise return trailing garbage as text. */
+ * than reading the full fixed width, which would otherwise return trailing garbage as text.
+ * Decoded as UTF-8, not 'ascii': `wavMetadataWriter.ts`'s writer encodes as UTF-8 (matching JUCE's
+ * own default string encoding on IR Lab's side), and Node's 'ascii' decoding masks the high bit of
+ * every byte — reading a UTF-8-encoded non-ASCII field back with 'ascii' would re-corrupt it a
+ * second time on top of whatever the writer already did right. Plain ASCII text (the common case)
+ * decodes identically either way, so this is a no-op for every file already in the wild. */
 function readFixedAsciiField(buf: Buffer, start: number, length: number): string {
   const end = Math.min(start + length, buf.length)
   const nul = buf.indexOf(0, start)
   const stop = nul !== -1 && nul < end ? nul : end
-  return buf.toString('ascii', start, stop).trim()
+  return buf.toString('utf8', start, stop).trim()
 }
 
 export function parseWavHeader(buf: Buffer): WavHeader | null {

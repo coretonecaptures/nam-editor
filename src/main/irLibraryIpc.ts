@@ -38,7 +38,7 @@ import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labPro
 import { findDuplicates } from './irCatalog/duplicates'
 import { getCoverageMatrix } from './irCatalog/coveragePlanner'
 import { renameItem, renameItemsBatch, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
-import { syncRootWatchers, stopAllRootWatchers } from './irCatalog/irRootWatcher'
+import { syncRootWatchers, stopAllRootWatchers, suppressIrRootWatcher } from './irCatalog/irRootWatcher'
 import { previewLibraryCleanup, runLibraryCleanup, type CleanupPreviewRow } from './irCatalog/libraryCleanup'
 import { createIrFieldWriter, promoteFieldToFolder } from './irCatalog/fieldConfidence'
 import { getItemDetail } from './irCatalog/itemDetail'
@@ -762,6 +762,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
       | undefined
     if (!row) return { itemId, success: false, error: 'Item not found in the catalog.' }
     const absPath = join(row.rootPath, ...row.relativePath.split('/'))
+    suppressIrRootWatcher()
     const result = embedBwfMetadata(absPath, {
       cabinet: row.cabinet,
       speaker: row.speaker,
@@ -775,11 +776,24 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     return { itemId, ...result }
   }
 
-  ipcMain.handle('irLibrary:embedItemsMetadata', (_event, itemIds: string[]) => {
+  ipcMain.handle('irLibrary:embedItemsMetadata', async (_event, itemIds: string[]) => {
     if (!embedMetadataAllowed()) {
       return { allowed: false, results: [] as ReturnType<typeof embedOneItem>[] }
     }
-    return { allowed: true, results: itemIds.map(embedOneItem) }
+    // embedOneItem's WAV rewrite is fully synchronous fs I/O (open/read/write/close) — a genuinely
+    // async rewrite of that path would need the exact same careful position-tracking as the sync
+    // one (a real bug there was just found and fixed: mixing position-specified and
+    // position-omitted writes on one fd silently corrupted the RIFF header), which is more surgery
+    // than this fix warrants on its own. Yielding to the event loop BETWEEN items at least keeps
+    // Electron's single-threaded main process — and therefore every other IPC call and the UI
+    // itself — responsive between files in a multi-item embed, instead of freezing for the summed
+    // I/O time of the whole selection in one unbroken synchronous stretch.
+    const results: ReturnType<typeof embedOneItem>[] = []
+    for (const itemId of itemIds) {
+      results.push(embedOneItem(itemId))
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    return { allowed: true, results }
   })
   ipcMain.handle('irLibrary:embedMetadataAllowed', () => embedMetadataAllowed())
 

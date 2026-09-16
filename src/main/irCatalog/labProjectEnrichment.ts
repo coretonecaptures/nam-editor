@@ -26,6 +26,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { irFieldTargetTable, irFieldTargetIdColumn } from './fieldConfidence'
 
 interface CaptureIndexEntry {
   captureId: string
@@ -138,17 +139,17 @@ function makeIrFieldWriter(db: DatabaseSync): (itemId: string, field: string, va
     `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, 'ir_lab_native')
      ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
   )
-  // `notes` is the one field name this writer is ever called with that lives on `item`, not
-  // `ir_item` (fieldConfidence.ts's writer makes the same exception, for the same reason — see its
-  // own comment) — routed here too so a user's own notes edit (item detail panel, 'user_entered')
-  // survives a rescan instead of being silently overwritten by whatever session.json still says.
+  // notes-vs-ir_item table routing reuses fieldConfidence.ts's own irFieldTargetTable/
+  // irFieldTargetIdColumn rather than re-deriving the same `field === 'notes'` rule a second time
+  // — routed here too so a user's own notes edit (item detail panel, 'user_entered') survives a
+  // rescan instead of being silently overwritten by whatever session.json still says. (Only that
+  // routing piece is shared — this writer still deliberately skips createIrFieldWriter's RANK
+  // lookup entirely, since ir_lab_native is always top rank; see this file's own header comment.)
   return (itemId, field, value) => {
     if (!value) return
     const existing = selectSource.get(itemId, field) as { source: string } | undefined
     if (existing?.source === 'user_entered') return
-    const table = field === 'notes' ? 'item' : 'ir_item'
-    const idColumn = field === 'notes' ? 'id' : 'item_id'
-    db.prepare(`UPDATE ${table} SET ${field} = ? WHERE ${idColumn} = ?`).run(value, itemId)
+    db.prepare(`UPDATE ${irFieldTargetTable(field)} SET ${field} = ? WHERE ${irFieldTargetIdColumn(field)} = ?`).run(value, itemId)
     upsertSource.run(itemId, field)
   }
 }

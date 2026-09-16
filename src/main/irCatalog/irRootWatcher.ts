@@ -41,6 +41,26 @@ const activeWatchers = new Map<number, FSWatcher>()
 const manualWatcherDirs = new Map<number, Map<string, FSWatcher>>()
 const debounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
+// Same purpose as main/index.ts's own suppressWatcher() for NAM mode's folder watcher, scoped to
+// THIS module's watcher set instead — the two are entirely separate watcher systems (different
+// maps, different event sources), so NAM mode's suppression call has no effect here. Without this,
+// every IR-mode write this app makes to a watched root (rename, batch rename, move, embed-in-file)
+// fires this watcher's own change handler and triggers a needless full rescan purely because the
+// app's own write touched a file being watched — wasted work at best, and a race where the rescan
+// re-touches rows the write just finished at worst. One global window (not per-root) — same
+// simple design NAM mode's own suppressWatcher() already uses; a write always targets one root, so
+// a 3s global suppression after ANY IR write is a deliberately generous, never-wrong-direction
+// tradeoff, not a per-root optimization worth the extra bookkeeping.
+const SUPPRESS_MS = 3000
+let suppressUntil = 0
+
+/** Call after any local write this app makes to a file inside a watched IR library root —
+ * fileOps.ts's rename/move/batch-rename, namCaptureFileOps.ts's capture rename, and
+ * wavMetadataWriter.ts's embed-in-file should all call this once their write succeeds. */
+export function suppressIrRootWatcher(): void {
+  suppressUntil = Date.now() + SUPPRESS_MS
+}
+
 function listSubdirs(dirPath: string): string[] {
   let entries: Dirent[]
   try {
@@ -101,6 +121,10 @@ function refreshManualWatchers(rootId: number, rootPath: string, scheduleRescan:
 
 function startWatcher(root: WatchedRoot, onChange: (rootId: number, rootPath: string) => void, log: (msg: string) => void): void {
   const scheduleRescan = (): void => {
+    // Within the suppression window from suppressIrRootWatcher(), ignore this change event
+    // entirely — don't even touch a pending debounce timer — since it's almost certainly this
+    // app's own write, not something external that needs picking up.
+    if (Date.now() < suppressUntil) return
     const existing = debounceTimers.get(root.id)
     if (existing) clearTimeout(existing)
     debounceTimers.set(

@@ -51,13 +51,18 @@ export interface ImportDiffRow {
  * check is case-insensitive (Windows paths commonly differ in drive-letter/segment casing between
  * however a user's OS displays a path and how it was originally scanned); the relative path handed
  * to the actual DB lookup uses the ORIGINAL casing from the sheet, matching how relative_path was
- * stored at scan time. */
+ * stored at scan time.
+ *
+ * `roots` and `itemLookup` are supplied by the caller (fetched/prepared ONCE, outside the per-row
+ * loop) rather than re-queried here on every call — this ran inside `previewSpreadsheetImport`'s
+ * own `.map()` over every sheet row, so re-fetching the same small, static root list per row wasted
+ * a DB round-trip proportional to import size for a multi-thousand-row sheet. */
 function resolveItemByAbsPath(
-  db: DatabaseSync,
+  roots: Array<{ id: number; path: string }>,
+  itemLookup: ReturnType<DatabaseSync['prepare']>,
   absPath: string
 ): { itemId: string; displayName: string } | null {
   if (!isAbsolute(absPath)) return null
-  const roots = db.prepare(`SELECT id, path FROM library_root`).all() as Array<{ id: number; path: string }>
   const normalizedTarget = absPath.replace(/\\/g, '/').toLowerCase()
 
   for (const root of roots) {
@@ -67,9 +72,7 @@ function resolveItemByAbsPath(
     const rel = relative(root.path, absPath).replace(/\\/g, '/')
     if (rel.startsWith('..')) continue // outside this root despite the string prefix match (rare edge case)
 
-    const row = db
-      .prepare(`SELECT id, display_name FROM item WHERE library_root_id = ? AND relative_path = ?`)
-      .get(root.id, rel) as { id: string; display_name: string } | undefined
+    const row = itemLookup.get(root.id, rel) as { id: string; display_name: string } | undefined
     if (row) return { itemId: row.id, displayName: row.display_name }
   }
   return null
@@ -81,13 +84,15 @@ function resolveItemByAbsPath(
  * its own explicit action elsewhere in the UI — an import shouldn't silently wipe fields the sheet
  * simply didn't carry). */
 export function previewSpreadsheetImport(db: DatabaseSync, rows: ImportRow[]): ImportDiffRow[] {
+  const roots = db.prepare(`SELECT id, path FROM library_root`).all() as Array<{ id: number; path: string }>
+  const itemLookup = db.prepare(`SELECT id, display_name FROM item WHERE library_root_id = ? AND relative_path = ?`)
+  const currentValuesLookup = db.prepare(`SELECT manufacturer, cabinet, speaker, microphone FROM ir_item WHERE item_id = ?`)
+
   return rows.map((row): ImportDiffRow => {
-    const resolved = resolveItemByAbsPath(db, row.absPath)
+    const resolved = resolveItemByAbsPath(roots, itemLookup, row.absPath)
     if (!resolved) return { absPath: row.absPath, itemId: null, displayName: null, changes: [], notFound: true }
 
-    const current = db
-      .prepare(`SELECT manufacturer, cabinet, speaker, microphone FROM ir_item WHERE item_id = ?`)
-      .get(resolved.itemId) as Record<ImportField, string | null> | undefined
+    const current = currentValuesLookup.get(resolved.itemId) as Record<ImportField, string | null> | undefined
 
     const changes: ImportDiffField[] = []
     for (const field of EDITABLE_FIELDS) {

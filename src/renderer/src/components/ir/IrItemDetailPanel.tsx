@@ -173,8 +173,15 @@ export function IrItemDetailPanel({
     try {
       const failures: string[] = []
       if (notesDraft.trim() !== (detail.notes ?? '')) {
-        const result = await window.api.irLibrarySetItemMetadata(row.id, 'notes', notesDraft)
-        if (!result.success && notesDraft.trim()) failures.push('Notes')
+        // Notes has no per-field Clear button of its own (just a plain textarea, unlike TextField's
+        // fields below) — blanking it and hitting Save is the only way to clear it, so unlike the
+        // draft loop below (which deliberately routes a blank field through the dedicated Clear
+        // button instead of Save), this has to route a blank value through Clear itself, or
+        // clearing notes here silently does nothing (setItemMetadata rejects an empty value).
+        const result = notesDraft.trim()
+          ? await window.api.irLibrarySetItemMetadata(row.id, 'notes', notesDraft)
+          : await window.api.irLibraryClearItemMetadata(row.id, 'notes')
+        if (!result.success) failures.push('Notes')
       }
       for (const key of Object.keys(draft) as EditableField[]) {
         const value = (draft[key] ?? '').trim()

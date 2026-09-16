@@ -2,10 +2,10 @@ import { GEAR_TYPES, NamFile, TONE_TYPES } from '../types/nam'
 import {
   METADATA_SUGGEST_FIELD_OPTIONS,
   MetadataSuggestField,
-  MetadataSuggestMatchType,
   MetadataSuggestRule,
   MetadataSuggestScopedRuleSet,
 } from '../types/settings'
+import { compact, extractTokens, extractSegments as extractFilenameSegments, matchesToken, matchByType, normalizePath } from './suggestMatching'
 
 export interface MetadataSuggestion {
   id: string
@@ -48,84 +48,6 @@ function detectToneType(baseName: string): typeof TONE_TYPES[number] | null {
     }
   }
   return best?.tone ?? null
-}
-
-function extractTokens(text: string): Set<string> {
-  const matches = text.toLowerCase().match(/[a-z0-9]+/g) ?? []
-  return new Set(matches)
-}
-
-function extractFilenameSegments(text: string): string[] {
-  return text
-    .split(/\s+/)
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-}
-
-function compact(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, '')
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, '/')
-}
-
-function matchesToken(raw: string, tokens: Set<string>, token: string): boolean {
-  const trimmed = token.trim().toLowerCase()
-  if (!trimmed) return false
-  const compactToken = compact(trimmed)
-  if (!compactToken) return false
-
-  if (tokens.has(compactToken)) return true
-
-  const rawLower = raw.toLowerCase()
-  if (trimmed.includes(' ') || trimmed.includes('-') || trimmed.includes('_')) {
-    return rawLower.includes(trimmed) || compact(rawLower).includes(compactToken)
-  }
-
-  if (compactToken.length <= 3) {
-    const boundary = new RegExp(`(^|[^a-z0-9])${compactToken}([^a-z0-9]|$)`, 'i')
-    return boundary.test(rawLower)
-  }
-
-  return rawLower.includes(trimmed) || compact(rawLower).includes(compactToken)
-}
-
-function matchByType(raw: string, tokens: Set<string>, token: string, matchType: MetadataSuggestMatchType): { matched: boolean; extractedValue?: string; extractedMatch?: string } {
-  const trimmed = token.trim()
-  const rawLower = raw.toLowerCase()
-  const trimmedLower = trimmed.toLowerCase()
-  const compactToken = compact(trimmedLower)
-  const compactRaw = compact(rawLower)
-
-  if (!trimmed) return { matched: false }
-
-  switch (matchType) {
-    case 'contains':
-      return { matched: rawLower.includes(trimmedLower) || compactRaw.includes(compactToken) }
-    case 'starts_with':
-      return { matched: rawLower.startsWith(trimmedLower) || compactRaw.startsWith(compactToken) }
-    case 'ends_with':
-      return { matched: rawLower.endsWith(trimmedLower) || compactRaw.endsWith(compactToken) }
-    case 'prefix_value': {
-      const escaped = escapeRegExp(trimmed)
-      const regex = new RegExp(`(^|[^a-z0-9])(${escaped})([0-9]+(?:\\.[0-9]+)?)($|[^a-z0-9])`, 'i')
-      const match = raw.match(regex)
-      if (!match) return { matched: false }
-      return {
-        matched: true,
-        extractedValue: match[3],
-        extractedMatch: `${match[2]}${match[3]}`,
-      }
-    }
-    case 'exact':
-    default:
-      return { matched: matchesToken(raw, tokens, trimmed) }
-  }
 }
 
 function isBlankValue(value: unknown): boolean {

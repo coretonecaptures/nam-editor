@@ -32,6 +32,17 @@ export const FIELD_SOURCE_RANK: Record<Exclude<FieldSource, 'user_entered'>, num
   filename_inferred: 5
 }
 
+/** `notes` is the one field name either IR field writer in this codebase is ever called with that
+ * lives on `item`, not `ir_item` — the free-text notes column NAM mode's own file notes concept
+ * mirrors. Provenance tracking (`ir_item_field_source`) works identically for it even though its
+ * value lives elsewhere — that table only ever stores a field NAME + source, never the value
+ * itself. Exported so labProjectEnrichment.ts's own writer (which deliberately does NOT reuse the
+ * rest of `createIrFieldWriter` below — see this file's header comment on why) still shares this
+ * one piece rather than re-deriving it: the routing rule itself has nothing to do with the
+ * confidence-ladder logic that writer opts out of. */
+export const irFieldTargetTable = (field: string): 'item' | 'ir_item' => (field === 'notes' ? 'item' : 'ir_item')
+export const irFieldTargetIdColumn = (field: string): string => (field === 'notes' ? 'id' : 'item_id')
+
 export interface IrFieldWriter {
   /** Returns true if the field was actually written; false if refused (already user_entered, or
    * already held by a source ranked equal-or-higher than the one being offered). */
@@ -90,18 +101,9 @@ export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
     `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, ?)
      ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
   )
-  // `notes` is the one field this writer handles that lives on `item`, not `ir_item` — it's the
-  // same free-text notes column NAM mode's own file notes concept mirrors, and
-  // labProjectEnrichment.ts already writes it there from session.json's metadata.notes. Every
-  // other field name passed in here is a real `ir_item` column; provenance tracking
-  // (ir_item_field_source) still works identically for 'notes' even though its value lives
-  // elsewhere — the table only ever stores a field NAME + source, never the value itself.
-  const targetTable = (field: string): 'item' | 'ir_item' => (field === 'notes' ? 'item' : 'ir_item')
-  const targetIdColumn = (field: string): string => (field === 'notes' ? 'id' : 'item_id')
-
   return {
     clear(itemId, field) {
-      db.prepare(`UPDATE ${targetTable(field)} SET ${field} = NULL WHERE ${targetIdColumn(field)} = ?`).run(itemId)
+      db.prepare(`UPDATE ${irFieldTargetTable(field)} SET ${field} = NULL WHERE ${irFieldTargetIdColumn(field)} = ?`).run(itemId)
       db.prepare(`DELETE FROM ir_item_field_source WHERE item_id = ? AND field = ?`).run(itemId, field)
     },
     write(itemId, field, value, source) {
@@ -118,7 +120,7 @@ export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
           return false
         }
       }
-      db.prepare(`UPDATE ${targetTable(field)} SET ${field} = ? WHERE ${targetIdColumn(field)} = ?`).run(value, itemId)
+      db.prepare(`UPDATE ${irFieldTargetTable(field)} SET ${field} = ? WHERE ${irFieldTargetIdColumn(field)} = ?`).run(value, itemId)
       upsertSource.run(itemId, field, source)
       return true
     }

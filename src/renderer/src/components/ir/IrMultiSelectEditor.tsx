@@ -193,6 +193,12 @@ export function IrMultiSelectEditor({
         if (field.type === 'number') {
           const value = raw === '' ? null : Number(raw)
           result = value !== null && !Number.isFinite(value) ? { success: false } : await window.api.irLibrarySetItemNumericField(itemId, field.key, value)
+        } else if (raw === '') {
+          // irLibrarySetItemMetadata's IPC handler flatly rejects an empty value ({success:false})
+          // — blanking a shared text field across a selection has to go through Clear (reverts to
+          // whatever the folder/automation would otherwise resolve to), the same route
+          // IrItemDetailPanel.tsx's own per-field Clear button uses, not a plain set-to-empty.
+          result = await window.api.irLibraryClearItemMetadata(itemId, field.key)
         } else {
           result = await window.api.irLibrarySetItemMetadata(itemId, field.key, raw)
         }

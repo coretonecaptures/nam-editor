@@ -7,8 +7,10 @@ import { parseWavHeader, describeWavHeader, formatSampleRate } from './wavHeader
  * fixed 602-byte body zeroed (OriginatorReference/OriginationDate/etc. — irrelevant here). */
 function makeBextChunk(description: string, originator: string): { id: string; size: number; body: Buffer } {
   const body = Buffer.alloc(602)
-  body.write(description, 0, 'ascii')
-  body.write(originator, 256, 'ascii')
+  // UTF-8, matching wavMetadataWriter.ts's real writer — plain ASCII text encodes identically
+  // either way, so this only actually differs from the old 'ascii' fixture for non-ASCII tests.
+  body.write(description, 0, 'utf8')
+  body.write(originator, 256, 'utf8')
   return { id: 'bext', size: body.length, body }
 }
 
@@ -139,6 +141,12 @@ describe('parseWavHeader', () => {
     const h = parseWavHeader(makeWav({ leadingChunks: [bext] }))
     expect(h!.bwfDescription).toBe('Short')
     expect(h!.bwfDescription!.length).toBe(5)
+  })
+
+  it('round-trips non-ASCII text (umlaut, curly quote, non-Latin script) instead of corrupting it', () => {
+    const bext = makeBextChunk('Cabinet: Böhm 4x12 “Vintage” | Notes: ギター', 'IR Lab')
+    const h = parseWavHeader(makeWav({ leadingChunks: [bext] }))
+    expect(h!.bwfDescription).toBe('Cabinet: Böhm 4x12 “Vintage” | Notes: ギター')
   })
 })
 

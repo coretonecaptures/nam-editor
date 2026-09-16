@@ -15,10 +15,10 @@
  * at all. If the DB update throws after a successful disk op, this attempts a best-effort rollback
  * of the disk side so the two never end up silently out of sync.
  *
- * `suppressWatcher()` (main/index.ts) is deliberately NOT called here: nothing watches IR library
- * roots yet (parity backlog item 13 — `library_root.watch_mode = 'watched'` exists as a column
- * with nothing reading it). Once that watcher exists, it will need its own suppression mechanism
- * anyway, scoped to IR roots rather than NAM mode's `.nam`-file watcher — wire it then, not now.
+ * Every disk-mutating function here calls `suppressIrRootWatcher()` (irRootWatcher.ts) before
+ * writing — item 13's own watcher now runs live rescans for `watch_mode = 'watched'` roots, so an
+ * unsuppressed write from this module would trigger that watcher's own change handler and fire a
+ * needless full rescan purely because the app's own write touched a file it's watching.
  */
 import type { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
@@ -26,6 +26,7 @@ import { join, dirname, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { toPosixRel } from './scanWalk'
 import { deleteWithFallback } from '../trashFile'
+import { suppressIrRootWatcher } from './irRootWatcher'
 
 export interface FileOpResult {
   itemId: string
@@ -140,6 +141,7 @@ export async function renameItem(db: DatabaseSync, itemId: string, newBaseName: 
 
   if (newAbsPath === oldAbsPath) return { itemId, success: true, newAbsPath }
 
+  suppressIrRootWatcher()
   try {
     if (fs.existsSync(newAbsPath)) {
       if (!force) return { itemId, success: false, error: 'A file with that name already exists.' }
@@ -214,8 +216,35 @@ export async function renameItemsBatch(
     planned.push({ itemId, folderId: resolved.folderId, oldAbsPath, newAbsPath, newFileName })
   }
 
+  // Same-batch collision guard: two planned renames landing on the same destination path (case-
+  // insensitive, matching how Windows/macOS filesystems actually collide — IrBatchRenameModal's
+  // own preview already flags this the same way before Apply is even enabled). Caught here,
+  // BEFORE the disk phase, because `force` only means "overwrite whatever's on disk right now" —
+  // applied per-item as the disk loop below runs, it would let a later rename in this SAME batch
+  // silently delete the file an earlier rename in this batch just produced, since the earlier
+  // rename's result is already sitting on disk by the time the later one's existsSync check runs.
+  {
+    const byTarget = new Map<string, string[]>()
+    for (const p of planned) {
+      const key = p.newAbsPath.toLowerCase()
+      const list = byTarget.get(key)
+      if (list) list.push(p.itemId)
+      else byTarget.set(key, [p.itemId])
+    }
+    const collision = [...byTarget.entries()].find(([, ids]) => ids.length > 1)
+    if (collision) {
+      const [, collidingIds] = collision
+      return planned.map((p) =>
+        collidingIds.includes(p.itemId)
+          ? { itemId: p.itemId, success: false, error: 'Batch aborted — this item shares its new name with another item in the same batch.' }
+          : { itemId: p.itemId, success: false, error: 'Batch aborted — another item in this batch collided with a third.' }
+      )
+    }
+  }
+
   // Disk phase: rename each in order, remembering what succeeded so a failure partway can be
   // rolled back to leave the filesystem exactly as it was before the batch started.
+  suppressIrRootWatcher()
   const renamedOnDisk: Planned[] = []
   for (const p of planned) {
     if (p.newAbsPath === p.oldAbsPath) {
@@ -280,6 +309,7 @@ export async function renameItemsBatch(
  * across that boundary is a user decision this function shouldn't make silently). Creates the
  * destination folder if it doesn't exist yet, matching how the scanner would discover it. */
 export async function moveItems(db: DatabaseSync, itemIds: string[], destFolderId: number | null, force = false): Promise<FileOpResult[]> {
+  suppressIrRootWatcher()
   const results: FileOpResult[] = []
   const destFolderRel = destFolderId != null ? folderRelativePath(db, destFolderId) : ''
 
@@ -347,6 +377,7 @@ export async function moveItems(db: DatabaseSync, itemIds: string[], destFolderI
 /** Ensures the destination folder exists (creating it if needed) and returns its id — the entry
  * point for a "Move to…" picker that lets the user type/pick a folder that may not exist yet. */
 export function ensureDestinationFolder(db: DatabaseSync, libraryRootId: number, relativeFolderPath: string): number | null {
+  suppressIrRootWatcher()
   return ensureFolderPath(db, libraryRootId, relativeFolderPath)
 }
 
@@ -357,6 +388,7 @@ export function ensureDestinationFolder(db: DatabaseSync, libraryRootId: number,
  * asked for it to go, not for it to be flagged as unexpectedly absent. `ON DELETE CASCADE` on
  * `ir_item`/`nam_capture_item`/etc. (schema.ts) takes the attached rows with it. */
 export async function trashItems(db: DatabaseSync, itemIds: string[]): Promise<FileOpResult[]> {
+  suppressIrRootWatcher()
   const results: FileOpResult[] = []
   const deleteItem = db.prepare(`DELETE FROM item WHERE id = ?`)
 
@@ -400,6 +432,7 @@ export async function trashItems(db: DatabaseSync, itemIds: string[]): Promise<F
  * specific file, and silently duplicating them onto a copy neither NAM mode nor IR Lab's own
  * project model does anywhere else in this app. */
 export async function copyItems(db: DatabaseSync, itemIds: string[], destFolderId: number | null, force = false): Promise<FileOpResult[]> {
+  suppressIrRootWatcher()
   const results: FileOpResult[] = []
   const destFolderRel = destFolderId != null ? folderRelativePath(db, destFolderId) : ''
 
@@ -513,6 +546,7 @@ export function createFolder(db: DatabaseSync, libraryRootId: number, parentFold
   if (!rootPath) return { success: false, error: 'Library root not found.' }
   const absPath = join(rootPath, ...relativePath.split('/'))
   if (fs.existsSync(absPath)) return { success: false, error: 'A folder with that name already exists.' }
+  suppressIrRootWatcher()
   try {
     fs.mkdirSync(absPath, { recursive: true })
   } catch (err) {
@@ -540,6 +574,7 @@ export function renameFolder(db: DatabaseSync, folderId: number, newName: string
   const oldAbsPath = join(folder.libraryRootPath, ...folder.relativePath.split('/'))
   const newAbsPath = join(folder.libraryRootPath, ...newRelativePath.split('/'))
 
+  suppressIrRootWatcher()
   try {
     if (fs.existsSync(newAbsPath)) {
       if (!force) return { success: false, error: 'A folder with that name already exists.' }
@@ -589,6 +624,7 @@ export async function deleteFolder(db: DatabaseSync, folderId: number): Promise<
   if (!folder) return { success: false, error: 'Folder not found.' }
   const absPath = join(folder.libraryRootPath, ...folder.relativePath.split('/'))
 
+  suppressIrRootWatcher()
   try {
     await deleteWithFallback(absPath)
   } catch (err) {
