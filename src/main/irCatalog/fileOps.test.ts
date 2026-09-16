@@ -7,7 +7,7 @@ import { createCoreSchema, finalizeIndexes } from './schema'
 import { importLibrary } from './importLibrary'
 import { setFavorite, setRating } from './queryLibrary'
 import { getOrCreateTag, addItemToTag, listTagsForItem } from './tag'
-import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './fileOps'
+import { renameItem, renameItemsBatch, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './fileOps'
 import { hasFts5 } from './sqliteCapabilities'
 
 const tmpDirs: string[] = []
@@ -33,6 +33,19 @@ async function setUpLibrary(): Promise<{ db: DatabaseSync; root: string; library
 
 function itemIdFor(db: DatabaseSync, suffix: string): string {
   return (db.prepare(`SELECT id FROM item WHERE relative_path LIKE ?`).get(`%${suffix}`) as { id: string }).id
+}
+
+async function setUpLibraryMulti(): Promise<{ db: DatabaseSync; root: string; libraryRootId: number }> {
+  const root = makeTmpDir()
+  fs.mkdirSync(join(root, 'PackA'), { recursive: true })
+  fs.writeFileSync(join(root, 'PackA', 'One.wav'), 'x'.repeat(500))
+  fs.writeFileSync(join(root, 'PackA', 'Two.wav'), 'x'.repeat(500))
+  fs.writeFileSync(join(root, 'PackA', 'Three.wav'), 'x'.repeat(500))
+  const db = new DatabaseSync(':memory:')
+  createCoreSchema(db)
+  const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+  finalizeIndexes(db)
+  return { db, root, libraryRootId: stats.libraryRootId }
 }
 
 describe.skipIf(!hasFts5())('fileOps', () => {
@@ -148,6 +161,81 @@ describe.skipIf(!hasFts5())('fileOps', () => {
     // Rolled back: the original file is back, the renamed one is gone.
     expect(fs.existsSync(join(root, 'PackA', 'Marshall412.wav'))).toBe(true)
     expect(fs.existsSync(join(root, 'PackA', 'WontStick.wav'))).toBe(false)
+  })
+
+  describe('renameItemsBatch', () => {
+    it('renames every item in one call, each independently, and commits the catalog in one transaction', async () => {
+      const { db, root } = await setUpLibraryMulti()
+      const one = itemIdFor(db, 'One.wav')
+      const two = itemIdFor(db, 'Two.wav')
+      const three = itemIdFor(db, 'Three.wav')
+
+      const results = await renameItemsBatch(db, [
+        { itemId: one, newBaseName: 'First' },
+        { itemId: two, newBaseName: 'Second' },
+        { itemId: three, newBaseName: 'Third' }
+      ])
+      expect(results.every((r) => r.success)).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'First.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Second.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Third.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'One.wav'))).toBe(false)
+    })
+
+    it('a disk collision partway through rolls the WHOLE batch back — nothing stays renamed', async () => {
+      const { db, root } = await setUpLibraryMulti()
+      const one = itemIdFor(db, 'One.wav')
+      const two = itemIdFor(db, 'Two.wav')
+      const three = itemIdFor(db, 'Three.wav')
+      // "Second" already exists on disk, so renaming Two -> Second (the batch's 2nd item) fails
+      // after One -> First has already succeeded on disk.
+      fs.writeFileSync(join(root, 'PackA', 'Second.wav'), 'y'.repeat(10))
+
+      const results = await renameItemsBatch(db, [
+        { itemId: one, newBaseName: 'First' },
+        { itemId: two, newBaseName: 'Second' },
+        { itemId: three, newBaseName: 'Third' }
+      ])
+      expect(results.every((r) => !r.success)).toBe(true)
+      // Rolled back to exactly where it started: One's rename was undone, Two/Three never moved.
+      expect(fs.existsSync(join(root, 'PackA', 'One.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'First.wav'))).toBe(false)
+      expect(fs.existsSync(join(root, 'PackA', 'Two.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Three.wav'))).toBe(true)
+      const row = db.prepare(`SELECT relative_path as relativePath FROM item WHERE id = ?`).get(one) as { relativePath: string }
+      expect(row.relativePath).toBe('PackA/One.wav')
+    })
+
+    it('a catalog-transaction failure after every disk rename succeeded rolls disk back too', async () => {
+      const { db, root } = await setUpLibraryMulti()
+      const one = itemIdFor(db, 'One.wav')
+      const two = itemIdFor(db, 'Two.wav')
+      db.exec(`CREATE TRIGGER block_item_update BEFORE UPDATE ON item BEGIN SELECT RAISE(ABORT, 'simulated DB failure'); END`)
+
+      const results = await renameItemsBatch(db, [
+        { itemId: one, newBaseName: 'First' },
+        { itemId: two, newBaseName: 'Second' }
+      ])
+      expect(results.every((r) => !r.success)).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'One.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'Two.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'First.wav'))).toBe(false)
+      expect(fs.existsSync(join(root, 'PackA', 'Second.wav'))).toBe(false)
+    })
+
+    it('a precondition failure (blank name) aborts the whole batch before any disk mutation', async () => {
+      const { db, root } = await setUpLibraryMulti()
+      const one = itemIdFor(db, 'One.wav')
+      const two = itemIdFor(db, 'Two.wav')
+
+      const results = await renameItemsBatch(db, [
+        { itemId: one, newBaseName: 'First' },
+        { itemId: two, newBaseName: '   ' }
+      ])
+      expect(results.every((r) => !r.success)).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'One.wav'))).toBe(true)
+      expect(fs.existsSync(join(root, 'PackA', 'First.wav'))).toBe(false)
+    })
   })
 
   it('refuses to operate on an item marked missing_since', async () => {

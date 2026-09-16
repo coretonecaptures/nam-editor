@@ -484,6 +484,7 @@ declare global {
         sampleRate?: number | number[]
         bitDepth?: number | number[]
         channels?: number
+        kind?: 'cab' | 'reverb'
         sort?: string
         sortDir?: 'asc' | 'desc'
         offset: number
@@ -737,6 +738,10 @@ declare global {
         }>
       >
       irLibraryRenameItem: (itemId: string, newBaseName: string, force?: boolean) => Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>
+      irLibraryRenameItemsBatch: (
+        renames: Array<{ itemId: string; newBaseName: string }>,
+        force?: boolean
+      ) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>>
       irLibraryMoveItems: (itemIds: string[], destFolderId: number | null, force?: boolean) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>>
       irLibraryTrashItems: (itemIds: string[]) => Promise<Array<{ itemId: string; success: boolean; error?: string }>>
       irLibraryCopyItems: (itemIds: string[], destFolderId: number | null, force?: boolean) => Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string; newItemId?: string }>>
@@ -759,6 +764,69 @@ declare global {
       irLibrarySetItemMetadata: (itemId: string, field: string, value: string) => Promise<{ success: boolean }>
       irLibraryClearItemMetadata: (itemId: string, field: string) => Promise<{ success: boolean }>
       irLibraryPromoteItemFieldToFolder: (itemId: string, field: string) => Promise<{ success: boolean; itemsCleared: number }>
+      irLibrarySetItemNumericField: (itemId: string, field: string, value: number | null) => Promise<{ success: boolean }>
+      irLibraryEmbedMetadataAllowed: () => Promise<boolean>
+      irLibraryPreviewSpreadsheetImport: (
+        rows: Array<{ absPath: string; manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }>
+      ) => Promise<
+        Array<{
+          absPath: string
+          itemId: string | null
+          displayName: string | null
+          changes: Array<{ field: string; label: string; oldValue: string; newValue: string }>
+          notFound: boolean
+        }>
+      >
+      irLibraryRenameNamCapture: (
+        itemId: string,
+        newBaseName: string,
+        force?: boolean
+      ) => Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>
+      irLibraryQueryItemsForSuggestions: (options: { libraryRootId: number | null; folderId: number | null }) => Promise<{
+        rows: Array<{
+          id: string
+          relative_path: string
+          display_name: string
+          manufacturer: string | null
+          cabinet: string | null
+          speaker: string | null
+          microphone: string | null
+          position: string | null
+        }>
+        truncated: boolean
+      }>
+      irLibraryApplySpreadsheetImport: (
+        diffRows: Array<{
+          absPath: string
+          itemId: string | null
+          displayName: string | null
+          changes: Array<{ field: string; label: string; oldValue: string; newValue: string }>
+          notFound: boolean
+        }>
+      ) => Promise<{ applied: number; failed: number }>
+      irLibraryEmbedItemsMetadata: (
+        itemIds: string[]
+      ) => Promise<{ allowed: boolean; results: Array<{ itemId: string; success: boolean; error?: string; truncatedDescription?: boolean }> }>
+      irLibraryGetItemDetail: (itemId: string) => Promise<{
+        id: string
+        displayName: string
+        relativePath: string
+        notes: string | null
+        notesSource: string | null
+        rating: number | null
+        isFavorite: boolean
+        isReverb: boolean
+        isStereo: boolean
+        isTrueStereo: boolean
+        fields: Record<string, { value: string | null; source: string | null }>
+        micADistance: number | null
+        micAAxisAngleDeg: number | null
+        micBDistance: number | null
+        micBAxisAngleDeg: number | null
+        reverbRecommendedWetPercent: number | null
+        reverbRecommendedPreDelayMs: number | null
+        reverbDecaySeconds: number | null
+      } | null>
       irLibrarySendSessionToIrLab: (captureId: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendProjectToIrLab: (projectId: string, preset?: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendNamGroupToIrLab: (items: Array<{ path: string; name?: string }>, slot?: number) => Promise<{ success: boolean; reason?: string }>

@@ -82,6 +82,19 @@ interface SessionJson {
     micBAxisAngleDeg?: number
     micBSignalChainOverride?: string
     micBNotes?: string
+    // 2026-09-12 CaptureMetadata reverb additions (ir-lab's Domain.h, confirmed against source —
+    // see schema.ts's own comment on the ir_item columns these land in). Absent on any session.json
+    // written before that date; every field below reads back undefined there, same as the mic-A/B
+    // additions above.
+    reverbUnitMake?: string
+    reverbUnitModel?: string
+    reverbPresetName?: string
+    reverbSpaceType?: string
+    reverbRecommendedWetPercent?: number
+    reverbRecommendedPreDelayMs?: number
+    reverbCaptureMode?: string
+    reverbSourceSignalType?: string
+    reverbDecaySeconds?: number
   }
 }
 
@@ -125,8 +138,39 @@ function makeIrFieldWriter(db: DatabaseSync): (itemId: string, field: string, va
     `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, 'ir_lab_native')
      ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
   )
+  // `notes` is the one field name this writer is ever called with that lives on `item`, not
+  // `ir_item` (fieldConfidence.ts's writer makes the same exception, for the same reason — see its
+  // own comment) — routed here too so a user's own notes edit (item detail panel, 'user_entered')
+  // survives a rescan instead of being silently overwritten by whatever session.json still says.
   return (itemId, field, value) => {
     if (!value) return
+    const existing = selectSource.get(itemId, field) as { source: string } | undefined
+    if (existing?.source === 'user_entered') return
+    const table = field === 'notes' ? 'item' : 'ir_item'
+    const idColumn = field === 'notes' ? 'id' : 'item_id'
+    db.prepare(`UPDATE ${table} SET ${field} = ? WHERE ${idColumn} = ?`).run(value, itemId)
+    upsertSource.run(itemId, field)
+  }
+}
+
+/** Same ir_lab_native/user_entered-sticky rule as makeIrFieldWriter, for ir_item's numeric columns
+ * (mic distance/axis-angle, reverb wet%/pre-delay/decay). These didn't get this guard when first
+ * added (they were unconditional `UPDATE`s) — real gap, closed here: a numeric field the item
+ * detail panel lets a user edit must survive a rescan the same way every string field already
+ * does, or the panel's own "Clear" affordance for the field would be pointless (a rescan would
+ * silently re-fill it moments later). `predicate` lets each caller define its own "is this value
+ * actually present" rule (0 is a legitimate on-axis angle, so it can't use plain truthiness the
+ * way the string writer does; see each call site). */
+function makeIrNumericFieldWriter(
+  db: DatabaseSync
+): (itemId: string, field: string, value: number | undefined, predicate: (v: number) => boolean) => void {
+  const selectSource = db.prepare(`SELECT source FROM ir_item_field_source WHERE item_id = ? AND field = ?`)
+  const upsertSource = db.prepare(
+    `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, 'ir_lab_native')
+     ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
+  )
+  return (itemId, field, value, predicate) => {
+    if (value === undefined || !predicate(value)) return
     const existing = selectSource.get(itemId, field) as { source: string } | undefined
     if (existing?.source === 'user_entered') return
     db.prepare(`UPDATE ir_item SET ${field} = ? WHERE item_id = ?`).run(value, itemId)
@@ -144,6 +188,7 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
 
   const ensureIrItem = db.prepare(`INSERT OR IGNORE INTO ir_item (item_id) VALUES (?)`)
   const writeField = makeIrFieldWriter(db)
+  const writeNumericField = makeIrNumericFieldWriter(db)
   const findCollectionByFolder = db.prepare(
     `SELECT id FROM collection WHERE folder_id = ? AND kind = 'ir_project'`
   )
@@ -284,19 +329,32 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabP
       writeField(item.id, 'mic_b_distance_unit', meta?.micBDistanceUnit)
       writeField(item.id, 'mic_b_signal_chain_override', meta?.micBSignalChainOverride)
       writeField(item.id, 'mic_b_notes', meta?.micBNotes)
-      if (meta?.notes) db.prepare(`UPDATE item SET notes = ? WHERE id = ?`).run(meta.notes, item.id)
+      // Routed through writeField (not a raw UPDATE) even though notes lives on `item`, not
+      // `ir_item` — fieldConfidence.ts's writer already special-cases the 'notes' field name to
+      // target the right table (see its own comment), and reusing it here is what stops this scan
+      // from clobbering a user's own edit made through the item detail panel on the next rescan.
+      writeField(item.id, 'notes', meta?.notes)
       // Numeric fields, written directly (writeField's writer only handles strings). A distance of
       // exactly 0 means "unset" per Domain.h's own comment, so it's skipped like any other blank
       // value; axis angle has no such convention (0 deg is a legitimate on-axis measurement), so
       // it's written whenever the key is present in the JSON at all, not gated on truthiness.
-      if (meta?.micADistance) db.prepare(`UPDATE ir_item SET mic_a_distance = ? WHERE item_id = ?`).run(meta.micADistance, item.id)
-      if (meta?.micAAxisAngleDeg !== undefined) {
-        db.prepare(`UPDATE ir_item SET mic_a_axis_angle_deg = ? WHERE item_id = ?`).run(meta.micAAxisAngleDeg, item.id)
-      }
-      if (meta?.micBDistance) db.prepare(`UPDATE ir_item SET mic_b_distance = ? WHERE item_id = ?`).run(meta.micBDistance, item.id)
-      if (meta?.micBAxisAngleDeg !== undefined) {
-        db.prepare(`UPDATE ir_item SET mic_b_axis_angle_deg = ? WHERE item_id = ?`).run(meta.micBAxisAngleDeg, item.id)
-      }
+      writeNumericField(item.id, 'mic_a_distance', meta?.micADistance, (v) => v > 0)
+      writeNumericField(item.id, 'mic_a_axis_angle_deg', meta?.micAAxisAngleDeg, () => true)
+      writeNumericField(item.id, 'mic_b_distance', meta?.micBDistance, (v) => v > 0)
+      writeNumericField(item.id, 'mic_b_axis_angle_deg', meta?.micBAxisAngleDeg, () => true)
+      // 2026-09-12 reverb additions — same writeField() ladder for the string fields (all
+      // operator-entered per Domain.h). The three numeric ones use Domain.h's own "unset" sentinels
+      // (-1 for the two recommended-* fields, 0 for decaySeconds) rather than truthiness, matching
+      // how micADistance's 0-is-unset convention is already handled above.
+      writeField(item.id, 'reverb_unit_make', meta?.reverbUnitMake)
+      writeField(item.id, 'reverb_unit_model', meta?.reverbUnitModel)
+      writeField(item.id, 'reverb_preset_name', meta?.reverbPresetName)
+      writeField(item.id, 'reverb_space_type', meta?.reverbSpaceType)
+      writeField(item.id, 'reverb_capture_mode', meta?.reverbCaptureMode)
+      writeField(item.id, 'reverb_source_signal_type', meta?.reverbSourceSignalType)
+      writeNumericField(item.id, 'reverb_recommended_wet_percent', meta?.reverbRecommendedWetPercent, (v) => v >= 0)
+      writeNumericField(item.id, 'reverb_recommended_pre_delay_ms', meta?.reverbRecommendedPreDelayMs, (v) => v >= 0)
+      writeNumericField(item.id, 'reverb_decay_seconds', meta?.reverbDecaySeconds, (v) => v > 0)
 
       if (analysis) {
         db.prepare(

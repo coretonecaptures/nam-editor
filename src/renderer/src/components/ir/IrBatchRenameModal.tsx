@@ -113,16 +113,21 @@ export function IrBatchRenameModal({
     if (toRename.length === 0 || hasCollisions) return
     setBusy(true)
     setProgress({ done: 0, total: toRename.length })
-    let succeeded = 0
-    let failed = 0
-    for (const p of toRename) {
-      const result = await window.api.irLibraryRenameItem(p.row.id, p.newName)
-      if (result.success) succeeded++
-      else failed++
-      setProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev))
-    }
+    // renameItemsBatch (fileOps.ts) does every disk rename first, then one DB transaction for the
+    // catalog updates — a failure anywhere rolls the WHOLE batch back to exactly where it started,
+    // rather than the old loop-of-independent-calls behavior that could leave some files renamed
+    // and others not. Progress here is just a visual pulse while the single IPC round-trip runs;
+    // there's no real per-item progress to report since it's one atomic call underneath.
+    const results = await window.api.irLibraryRenameItemsBatch(toRename.map((p) => ({ itemId: p.row.id, newBaseName: p.newName })))
+    setProgress({ done: toRename.length, total: toRename.length })
+    const succeeded = results.filter((r) => r.success).length
+    const failed = results.length - succeeded
     setBusy(false)
-    setResultMessage(failed === 0 ? `Renamed ${succeeded} item${succeeded === 1 ? '' : 's'}.` : `Renamed ${succeeded}, ${failed} failed (likely a name collision fileOps.ts caught that this preview didn't — e.g. a file added since the batch loaded).`)
+    setResultMessage(
+      failed === 0
+        ? `Renamed ${succeeded} item${succeeded === 1 ? '' : 's'}.`
+        : `Rolled back — ${failed} item${failed === 1 ? '' : 's'} couldn't be renamed (likely a name collision fileOps.ts caught that this preview didn't, e.g. a file added since the batch loaded): ${results.find((r) => !r.success)?.error ?? ''}`
+    )
     onRenamed()
   }
 

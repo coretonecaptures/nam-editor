@@ -11,10 +11,11 @@
 import { ipcMain, app, dialog, type BrowserWindow } from 'electron'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
-import { writeFileSync } from 'node:fs'
+import { writeFileSync, readFileSync } from 'node:fs'
+import { embedBwfMetadata } from './irCatalog/wavMetadataWriter'
 import { createCoreSchema, finalizeIndexes, itemSearchTableExists } from './irCatalog/schema'
 import { importLibrary } from './irCatalog/importLibrary'
-import { queryItems, countItems, setFavorite, setRating, listFacetOptions, listNumericFacetOptions } from './irCatalog/queryLibrary'
+import { queryItems, countItems, setFavorite, setRating, listFacetOptions, listNumericFacetOptions, queryItemsForSuggestions } from './irCatalog/queryLibrary'
 import { applyVendorParsers } from './irCatalog/vendorParsers/applyVendorParsers'
 import { reconcileMissingItems } from './irCatalog/reconciliation'
 import { runContentHashQueue } from './irCatalog/contentHash'
@@ -36,10 +37,13 @@ import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { findDuplicates } from './irCatalog/duplicates'
 import { getCoverageMatrix } from './irCatalog/coveragePlanner'
-import { renameItem, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
+import { renameItem, renameItemsBatch, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
 import { syncRootWatchers, stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { previewLibraryCleanup, runLibraryCleanup, type CleanupPreviewRow } from './irCatalog/libraryCleanup'
 import { createIrFieldWriter, promoteFieldToFolder } from './irCatalog/fieldConfidence'
+import { getItemDetail } from './irCatalog/itemDetail'
+import { previewSpreadsheetImport, applySpreadsheetImport, type ImportRow, type ImportDiffRow } from './irCatalog/spreadsheetImport'
+import { renameNamCapture } from './irCatalog/namCaptureFileOps'
 import {
   enrichNamCaptures,
   listNamProjects,
@@ -599,6 +603,11 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:renameItem', (_event, itemId: string, newBaseName: string, force?: boolean) =>
     renameItem(getDb(), itemId, newBaseName, force)
   )
+  ipcMain.handle(
+    'irLibrary:renameItemsBatch',
+    (_event, renames: Array<{ itemId: string; newBaseName: string }>, force?: boolean) =>
+      renameItemsBatch(getDb(), renames, force)
+  )
   ipcMain.handle('irLibrary:moveItems', (_event, itemIds: string[], destFolderId: number | null, force?: boolean) =>
     moveItems(getDb(), itemIds, destFolderId, force)
   )
@@ -629,13 +638,27 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     async (_event, options: { libraryRootId: number | null; folderId: number | null }, rows: CleanupPreviewRow[], mode: 'move' | 'copy') =>
       runLibraryCleanup(getDb(), options, rows, mode)
   )
-  // Per-item metadata editing (parity backlog item 7) — always writes at 'user_entered', the
-  // sticky-against-automation confidence tier fieldConfidence.ts already enforces. Restricted to
-  // the four fields that already have a *_source column AND a browse-row badge (manufacturer/
-  // cabinet/speaker/microphone) — `position` exists on ir_item too but isn't selected in the
-  // browse query yet, so there'd be nothing to show a "current value" against; add it here (and
-  // to queryLibrary.ts's SELECT) together, not as a silent half-feature.
-  const EDITABLE_IR_FIELDS = new Set(['manufacturer', 'cabinet', 'speaker', 'microphone'])
+  // Per-item metadata editing (parity backlog item 7, widened 2026-09-13 per
+  // docs/ir-metadata-full-parity-proposal-2026-09-13.md's G1 — see that doc for why the original
+  // four-field set was a deliberately-noted gap, not the final scope). Always writes at
+  // 'user_entered', the sticky-against-automation confidence tier fieldConfidence.ts already
+  // enforces. `notes` lives on `item`, not `ir_item` — fieldConfidence.ts's writer already knows to
+  // route it there (see its own comment) — everything else here is a real `ir_item` column.
+  // Deliberately excludes fields IR Lab itself only ever records automatically, never lets an
+  // operator type (capture_type, preset_kind, reverb_capture_mode, reverb_source_signal_type) and
+  // the WAV-header-measured facts (is_reverb/is_stereo/is_true_stereo) — those stay read-only
+  // display in the item detail panel, matching how this app treats NAM mode's own auto-set fields
+  // (e.g. loudness/gain/latency, which are editable only behind MetadataEditor's explicit
+  // unlock-to-override affordance, not a plain text field).
+  const EDITABLE_IR_FIELDS = new Set([
+    'manufacturer', 'cabinet', 'speaker', 'microphone', 'position', 'notes',
+    'speaker_position', 'modeled_microphone',
+    'mic_a_type', 'mic_a_polar_pattern', 'mic_a_target_zone', 'mic_a_distance_unit',
+    'mic_a_signal_chain_override', 'mic_a_notes',
+    'mic_b_type', 'mic_b_polar_pattern', 'mic_b_target_zone', 'mic_b_distance_unit',
+    'mic_b_signal_chain_override', 'mic_b_notes',
+    'reverb_unit_make', 'reverb_unit_model', 'reverb_preset_name', 'reverb_space_type'
+  ])
   ipcMain.handle('irLibrary:setItemMetadata', (_event, itemId: string, field: string, value: string) => {
     if (!EDITABLE_IR_FIELDS.has(field)) return { success: false }
     const trimmed = value.trim()
@@ -661,6 +684,125 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     const { itemsCleared } = promoteFieldToFolder(database, row.folderId, field, row.value)
     return { success: true, itemsCleared }
   })
+  // Numeric ir_item fields — mic distance/axis-angle, reverb wet%/pre-delay. Kept as a separate
+  // channel from setItemMetadata rather than overloading it with a string-vs-number union: these
+  // columns are REAL, and going through the string writer would store a TEXT value in a REAL
+  // column (SQLite allows it, but every numeric comparison/sort against that column downstream
+  // would then be comparing types inconsistently — not worth the ambiguity for two fields' worth
+  // of code reuse). `null` clears the field. No `user_entered` ladder check on read here since the
+  // ladder itself already lives in labProjectEnrichment.ts's writeNumericField — this channel IS
+  // the user_entered writer, the same relationship setItemMetadata has to that file's writeField.
+  const EDITABLE_IR_NUMERIC_FIELDS = new Set([
+    'mic_a_distance', 'mic_a_axis_angle_deg', 'mic_b_distance', 'mic_b_axis_angle_deg',
+    'reverb_recommended_wet_percent', 'reverb_recommended_pre_delay_ms'
+  ])
+  ipcMain.handle('irLibrary:setItemNumericField', (_event, itemId: string, field: string, value: number | null) => {
+    if (!EDITABLE_IR_NUMERIC_FIELDS.has(field)) return { success: false }
+    const database = getDb()
+    database.prepare(`UPDATE ir_item SET ${field} = ? WHERE item_id = ?`).run(value, itemId)
+    if (value === null) {
+      database.prepare(`DELETE FROM ir_item_field_source WHERE item_id = ? AND field = ?`).run(itemId, field)
+    } else {
+      database
+        .prepare(
+          `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, 'user_entered')
+           ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
+        )
+        .run(itemId, field)
+    }
+    return { success: true }
+  })
+  // Full single-item detail for the docked item detail panel (see itemDetail.ts's own header for
+  // why this is a separate query from the paginated browse SELECT).
+  ipcMain.handle('irLibrary:getItemDetail', (_event, itemId: string) => getItemDetail(getDb(), itemId))
+
+  // Embed metadata into the WAV itself (G3 of docs/ir-metadata-full-parity-proposal-2026-09-13.md)
+  // — gated server-side, not just by the renderer hiding the button, since this is the one IR
+  // metadata action that mutates the file on disk rather than only the catalog. Re-reads
+  // settings.json directly rather than importing main/index.ts's own loadAppSettingsFile — that
+  // file can't be imported here without re-running its app.whenReady() startup (same reason
+  // fileOps.ts's own header comment gives for staying out of main/index.ts entirely).
+  function embedMetadataAllowed(): boolean {
+    try {
+      const raw = readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8')
+      const parsed = JSON.parse(raw) as { irAllowEmbedMetadataInFile?: unknown }
+      return parsed.irAllowEmbedMetadataInFile === true
+    } catch {
+      return false
+    }
+  }
+
+  function embedOneItem(itemId: string): { itemId: string; success: boolean; error?: string; truncatedDescription?: boolean } {
+    const database = getDb()
+    const row = database
+      .prepare(
+        `SELECT item.relative_path as relativePath, library_root.path as rootPath,
+                ir_item.cabinet as cabinet, ir_item.speaker as speaker, ir_item.microphone as microphone,
+                ir_item.position as position, ir_item.capture_type as captureType,
+                ir_item.mic_a_distance as micADistance, ir_item.mic_a_distance_unit as micADistanceUnit,
+                item.notes as notes
+         FROM item
+         JOIN library_root ON library_root.id = item.library_root_id
+         LEFT JOIN ir_item ON ir_item.item_id = item.id
+         WHERE item.id = ?`
+      )
+      .get(itemId) as
+      | {
+          relativePath: string
+          rootPath: string
+          cabinet: string | null
+          speaker: string | null
+          microphone: string | null
+          position: string | null
+          captureType: string | null
+          micADistance: number | null
+          micADistanceUnit: string | null
+          notes: string | null
+        }
+      | undefined
+    if (!row) return { itemId, success: false, error: 'Item not found in the catalog.' }
+    const absPath = join(row.rootPath, ...row.relativePath.split('/'))
+    const result = embedBwfMetadata(absPath, {
+      cabinet: row.cabinet,
+      speaker: row.speaker,
+      microphone: row.microphone,
+      position: row.position,
+      captureType: row.captureType,
+      micADistance: row.micADistance,
+      micADistanceUnit: row.micADistanceUnit,
+      notes: row.notes
+    })
+    return { itemId, ...result }
+  }
+
+  ipcMain.handle('irLibrary:embedItemsMetadata', (_event, itemIds: string[]) => {
+    if (!embedMetadataAllowed()) {
+      return { allowed: false, results: [] as ReturnType<typeof embedOneItem>[] }
+    }
+    return { allowed: true, results: itemIds.map(embedOneItem) }
+  })
+  ipcMain.handle('irLibrary:embedMetadataAllowed', () => embedMetadataAllowed())
+
+  // Spreadsheet import (parity backlog item 19) — preview and apply are two separate calls
+  // deliberately: the renderer shows the preview's diff, the user confirms, THEN apply runs on
+  // exactly those rows (see spreadsheetImport.ts's own header for why apply never recomputes).
+  ipcMain.handle('irLibrary:previewSpreadsheetImport', (_event, rows: ImportRow[]) => previewSpreadsheetImport(getDb(), rows))
+  ipcMain.handle('irLibrary:applySpreadsheetImport', (_event, diffRows: ImportDiffRow[]) => applySpreadsheetImport(getDb(), diffRows))
+
+  // Metadata suggestion rules (parity backlog item 20) — the source rows the renderer's rule
+  // engine (utils/irMetadataSuggest.ts) runs against; applying a resulting suggestion reuses the
+  // existing irLibrary:setItemMetadata channel (same user_entered write everything else uses), so
+  // no separate "apply suggestion" IPC is needed.
+  ipcMain.handle('irLibrary:queryItemsForSuggestions', (_event, options: { libraryRootId: number | null; folderId: number | null }) =>
+    queryItemsForSuggestions(getDb(), options)
+  )
+
+  // NAM Capture rename (parity backlog item 15) — see namCaptureFileOps.ts's own header for the
+  // scope this ended up at, and what's still unverified against the real IR Lab app.
+  ipcMain.handle('irLibrary:renameNamCapture', (_event, itemId: string, newBaseName: string, force?: boolean) =>
+    renameNamCapture(getDb(), itemId, newBaseName, force)
+  )
+
   ipcMain.handle('irLibrary:sendSessionToIrLab', async (_event, captureId: string) => {
     if (!captureId) return { success: false, reason: 'No capture id for this item.' }
     return sendToIrLab({ kind: 'session', captureId })

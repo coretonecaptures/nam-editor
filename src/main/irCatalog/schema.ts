@@ -202,7 +202,24 @@ CREATE TABLE IF NOT EXISTS ir_item (
   mic_b_distance_unit         TEXT,
   mic_b_axis_angle_deg        REAL,
   mic_b_signal_chain_override TEXT,
-  mic_b_notes                 TEXT
+  mic_b_notes                 TEXT,
+  -- Reverb-specific (IR Lab's 2026-09-12 CaptureMetadata additions, confirmed against
+  -- src/core/Domain.h in C:\Users\Admin\ir-lab — not guessed). Meaningful only for a capture whose
+  -- preset expected a decay tail; blank/-1/0 for every ordinary cab capture, same "additive, never
+  -- required" convention as the mic-A/B block above. unitMake/unitModel/presetName/spaceType and
+  -- the two recommended-* numbers are operator-entered in IR Lab's own data model but IR Lab has
+  -- "no UI built yet" for them (Domain.h's own comment) — this app's editor is the first place a
+  -- user can actually set them. captureMode/sourceSignalType/decaySeconds are recorded/measured
+  -- automatically and stay read-only here, same treatment as capture_type/preset_kind above.
+  reverb_unit_make                  TEXT,
+  reverb_unit_model                 TEXT,
+  reverb_preset_name                TEXT,
+  reverb_space_type                 TEXT,
+  reverb_recommended_wet_percent    REAL, -- -1 = not set, per Domain.h
+  reverb_recommended_pre_delay_ms   REAL, -- -1 = not set, per Domain.h
+  reverb_capture_mode               TEXT, -- 'mono' / 'trueStereo' -- auto-recorded, read-only
+  reverb_source_signal_type         TEXT, -- 'sweep' / 'pop' / 'chirp' -- auto-recorded, read-only
+  reverb_decay_seconds              REAL  -- 0 = unmeasured -- measured, read-only
   -- Mic A's MODEL is 'microphone' above; Mic B's MODEL is IR Lab's own
   -- ProcessingRecipe::multiMicBlendNameRight, which this schema does not carry
   -- (ProcessingRecipe stays out of the database entirely, per design principle 6 in
@@ -484,7 +501,18 @@ function runMigrations(db: DatabaseSync): void {
       ['mic_b_distance_unit', 'TEXT'],
       ['mic_b_axis_angle_deg', 'REAL'],
       ['mic_b_signal_chain_override', 'TEXT'],
-      ['mic_b_notes', 'TEXT']
+      ['mic_b_notes', 'TEXT'],
+      // 2026-09-13: IR Lab's 2026-09-12 reverb CaptureMetadata additions — see this table's own
+      // CREATE TABLE comment for the source and the read-only subset.
+      ['reverb_unit_make', 'TEXT'],
+      ['reverb_unit_model', 'TEXT'],
+      ['reverb_preset_name', 'TEXT'],
+      ['reverb_space_type', 'TEXT'],
+      ['reverb_recommended_wet_percent', 'REAL'],
+      ['reverb_recommended_pre_delay_ms', 'REAL'],
+      ['reverb_capture_mode', 'TEXT'],
+      ['reverb_source_signal_type', 'TEXT'],
+      ['reverb_decay_seconds', 'REAL']
     ] as const) {
       if (!have.has(name)) db.exec(`ALTER TABLE ir_item ADD COLUMN ${name} ${type}`)
     }

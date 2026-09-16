@@ -21,6 +21,7 @@ import type {
 import type { TrainerHistoryEntry, TrainerQueueJob } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav } from '../../appNav'
 import { SettingsPanel } from '../SettingsPanel'
+import { IrHelpModal } from './IrHelpModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 import { namGearChipClass, namToneChipClass } from '../../assets/gear'
 import { ScaledImage } from '../ScaledImage'
@@ -2327,6 +2328,7 @@ export function toBatchItem(
 
 export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
   const [showSettings, setShowSettings] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [playerFile, setPlayerFile] = useState<NamFile | null>(null)
   // Target-based (not a plain boolean) so both the open-project header AND the Projects index
   // preview rail (no `detail` loaded there) can open the same modal for whichever project.
@@ -2921,6 +2923,24 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     if (target) window.api.revealFile(target)
   }, [])
 
+  // Capture rename (parity backlog item 15) — see namCaptureFileOps.ts's own header for what this
+  // does and does not touch on disk. A plain prompt rather than a dedicated inline editor, matching
+  // this modal-heavy menu's own level of polish for a first pass; worth a real rename dialog if
+  // this gets used often.
+  const renameCapture = useCallback(
+    async (capture: NamCaptureRow) => {
+      const next = window.prompt('Rename capture to:', capture.captureName)
+      if (!next || !next.trim() || next.trim() === capture.captureName) return
+      const result = await window.api.irLibraryRenameNamCapture(capture.itemId, next.trim())
+      if (!result.success) {
+        window.alert(result.error ?? 'Rename failed.')
+        return
+      }
+      void rescanAll()
+    },
+    [rescanAll]
+  )
+
   // Capture table/card "Actions" column (Phase 5) — declared after stageBatch/revealCapture
   // (both above) since it closes over them.
   const captureRowActions: CaptureRowActions = useMemo(
@@ -3004,6 +3024,13 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             setCaptureMenu(null)
           }
         },
+        {
+          label: 'Rename Capture…',
+          onClick: () => {
+            setCaptureMenu(null)
+            void renameCapture(capture)
+          }
+        },
         { divider: true },
         { label: 'Reveal WAV in Explorer', onClick: () => revealCapture(capture) }
       ]
@@ -3034,7 +3061,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       })
       return items
     },
-    [selectedCaptureIds, stageBatch, submitBatch, toggleCapture, revealCapture, rescanAll]
+    [selectedCaptureIds, stageBatch, submitBatch, toggleCapture, revealCapture, rescanAll, renameCapture]
   )
 
   return (
@@ -3093,6 +3120,18 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         )}
         <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           <button
+            onClick={() => setShowHelp(true)}
+            className={`tb-menu-btn ${showHelp ? 'active' : ''}`}
+            title="Help — IR and NAM Projects guides"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <circle cx="12" cy="12" r="9" strokeWidth="1.8" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M9.4 9.2a2.7 2.7 0 115.06 1.35c0 .84-.42 1.35-1.06 1.86-.61.48-1.17.96-1.17 1.96" />
+              <circle cx="12" cy="17.2" r="0.7" fill="currentColor" stroke="none" />
+            </svg>
+            Help
+          </button>
+          <button
             onClick={() => setShowSettings(true)}
             className={`tb-menu-btn ${showSettings ? 'active' : ''}`}
             title="Settings"
@@ -3106,6 +3145,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         </div>
       </div>
       </div>
+      {showHelp && <IrHelpModal initialTab="projects" onClose={() => setShowHelp(false)} />}
       {showSettings && (
         <SettingsPanel
           settings={settings}

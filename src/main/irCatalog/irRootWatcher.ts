@@ -15,11 +15,16 @@
  * costs more CPU per change, not correctness.
  *
  * `fs.watch(..., { recursive: true })` is NOT supported by Linux's inotify backend — Node throws
- * `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM` there. Falls back to non-recursive (top-level only) on
- * that platform rather than failing to watch at all; a new file inside an EXISTING subfolder won't
- * be picked up there, but a new top-level pack folder will. Documented, not silently degraded.
+ * `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM` there. Rather than degrading to top-level-only (missing any
+ * change inside an existing subfolder), this walks the root and opens one non-recursive `fs.watch`
+ * PER DIRECTORY, and re-walks to add/remove per-directory watchers every time a debounced rescan
+ * fires — so a brand-new subfolder created after the initial walk starts being watched on the very
+ * next change, without needing the app restarted or the root re-added. More file descriptors than a
+ * single recursive watch would use (one per directory in the tree, same cost `chokidar` and other
+ * userland recursive-watch shims pay on Linux for the same reason), not a correctness compromise.
  */
-import { watch, type FSWatcher } from 'node:fs'
+import { watch, readdirSync, type FSWatcher, type Dirent } from 'node:fs'
+import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 interface WatchedRoot {
@@ -29,8 +34,70 @@ interface WatchedRoot {
 
 const DEBOUNCE_MS = 2500
 
+// Native recursive watch (Windows/macOS, and Linux roots small enough or configured otherwise):
+// one watcher per root.
 const activeWatchers = new Map<number, FSWatcher>()
+// Manual per-directory recursion (Linux fallback): every watched subdirectory gets its own entry.
+const manualWatcherDirs = new Map<number, Map<string, FSWatcher>>()
 const debounceTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+function listSubdirs(dirPath: string): string[] {
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(dirPath, { withFileTypes: true })
+  } catch {
+    return [] // gone, permissions, or a transient drive drop — refreshManualWatchers will retry next fire
+  }
+  return entries.filter((e) => e.isDirectory()).map((e) => join(dirPath, e.name))
+}
+
+function walkAllDirs(rootPath: string): string[] {
+  const all = [rootPath]
+  const queue = [rootPath]
+  while (queue.length > 0) {
+    const dir = queue.shift() as string
+    for (const sub of listSubdirs(dir)) {
+      all.push(sub)
+      queue.push(sub)
+    }
+  }
+  return all
+}
+
+function bindManualDir(rootId: number, dirPath: string, scheduleRescan: () => void, log: (msg: string) => void): void {
+  const dirs = manualWatcherDirs.get(rootId)
+  if (!dirs || dirs.has(dirPath)) return
+  try {
+    const w = watch(dirPath, { recursive: false }, () => scheduleRescan())
+    w.on('error', (error) => {
+      log(`IR root watcher error for "${dirPath}": ${String(error)}`)
+      manualWatcherDirs.get(rootId)?.delete(dirPath)
+    })
+    dirs.set(dirPath, w)
+  } catch (err) {
+    log(`IR root watcher: could not watch subfolder "${dirPath}": ${String(err)}`)
+  }
+}
+
+/** Re-walks the root, opening a watcher for any subdirectory that's new since the last walk and
+ * closing any whose directory is gone — so the manual-recursion watcher set stays current as the
+ * tree changes, not just as of the moment watching started. */
+function refreshManualWatchers(rootId: number, rootPath: string, scheduleRescan: () => void, log: (msg: string) => void): void {
+  const dirs = manualWatcherDirs.get(rootId)
+  if (!dirs) return
+  const current = new Set(walkAllDirs(rootPath))
+  for (const [dirPath, w] of [...dirs.entries()]) {
+    if (!current.has(dirPath)) {
+      try {
+        w.close()
+      } catch {
+        // Already gone — nothing to do.
+      }
+      dirs.delete(dirPath)
+    }
+  }
+  for (const dirPath of current) bindManualDir(rootId, dirPath, scheduleRescan, log)
+}
 
 function startWatcher(root: WatchedRoot, onChange: (rootId: number, rootPath: string) => void, log: (msg: string) => void): void {
   const scheduleRescan = (): void => {
@@ -40,13 +107,17 @@ function startWatcher(root: WatchedRoot, onChange: (rootId: number, rootPath: st
       root.id,
       setTimeout(() => {
         debounceTimers.delete(root.id)
+        // Manual-recursion roots refresh their per-directory watcher set on every fire, BEFORE the
+        // rescan callback — a rename/create event just proved the tree changed, so this is exactly
+        // the moment a brand-new subfolder needs picking up for next time.
+        if (manualWatcherDirs.has(root.id)) refreshManualWatchers(root.id, root.path, scheduleRescan, log)
         onChange(root.id, root.path)
       }, DEBOUNCE_MS)
     )
   }
 
-  const bind = (recursive: boolean): FSWatcher => {
-    const watcher = watch(root.path, { recursive }, () => scheduleRescan())
+  const bindNativeRecursive = (): FSWatcher => {
+    const watcher = watch(root.path, { recursive: true }, () => scheduleRescan())
     // fs.watch is an EventEmitter — an unhandled 'error' throws and can crash the whole process,
     // not just this watcher (same risk noted on the training-folder watcher in main/index.ts).
     // Real case here: an IR library root living on a mapped/network drive that drops briefly.
@@ -57,7 +128,7 @@ function startWatcher(root: WatchedRoot, onChange: (rootId: number, rootPath: st
       // network drive reappearing is the expected recovery case, not a permanent failure.
       setTimeout(() => {
         try {
-          activeWatchers.set(root.id, bind(recursive))
+          activeWatchers.set(root.id, bindNativeRecursive())
         } catch (retryError) {
           log(`IR root watcher retry failed for "${root.path}": ${String(retryError)}`)
         }
@@ -67,14 +138,15 @@ function startWatcher(root: WatchedRoot, onChange: (rootId: number, rootPath: st
   }
 
   try {
-    activeWatchers.set(root.id, bind(true))
+    activeWatchers.set(root.id, bindNativeRecursive())
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM') {
-      log(`IR root watcher: recursive watch unavailable on this platform for "${root.path}" — falling back to top-level only.`)
-      try {
-        activeWatchers.set(root.id, bind(false))
-      } catch (fallbackErr) {
-        log(`IR root watcher: could not watch "${root.path}" at all: ${String(fallbackErr)}`)
+      log(`IR root watcher: recursive watch unavailable on this platform for "${root.path}" — watching every subfolder individually instead.`)
+      manualWatcherDirs.set(root.id, new Map())
+      refreshManualWatchers(root.id, root.path, scheduleRescan, log)
+      if ((manualWatcherDirs.get(root.id)?.size ?? 0) === 0) {
+        log(`IR root watcher: could not watch "${root.path}" at all — no subfolder watchers could be opened.`)
+        manualWatcherDirs.delete(root.id)
       }
     } else {
       log(`IR root watcher: could not watch "${root.path}": ${String(err)}`)
@@ -97,6 +169,17 @@ function stopWatcher(rootId: number): void {
     }
     activeWatchers.delete(rootId)
   }
+  const dirs = manualWatcherDirs.get(rootId)
+  if (dirs) {
+    for (const w of dirs.values()) {
+      try {
+        w.close()
+      } catch {
+        // Already closed/gone — nothing to do.
+      }
+    }
+    manualWatcherDirs.delete(rootId)
+  }
 }
 
 /** Reconciles the active watcher set against whatever's currently marked `watch_mode = 'watched'`
@@ -107,16 +190,16 @@ export function syncRootWatchers(db: DatabaseSync, onChange: (rootId: number, ro
   const watchedRoots = db.prepare(`SELECT id, path FROM library_root WHERE watch_mode = 'watched'`).all() as unknown as WatchedRoot[]
   const watchedIds = new Set(watchedRoots.map((r) => r.id))
 
-  for (const id of activeWatchers.keys()) {
+  for (const id of new Set([...activeWatchers.keys(), ...manualWatcherDirs.keys()])) {
     if (!watchedIds.has(id)) stopWatcher(id)
   }
   for (const root of watchedRoots) {
-    if (!activeWatchers.has(root.id)) startWatcher(root, onChange, log)
+    if (!activeWatchers.has(root.id) && !manualWatcherDirs.has(root.id)) startWatcher(root, onChange, log)
   }
 }
 
 /** Stops every active watcher — call on app quit so nothing keeps the process alive or fires a
  * rescan against a database connection that's about to close. */
 export function stopAllRootWatchers(): void {
-  for (const id of [...activeWatchers.keys()]) stopWatcher(id)
+  for (const id of new Set([...activeWatchers.keys(), ...manualWatcherDirs.keys()])) stopWatcher(id)
 }

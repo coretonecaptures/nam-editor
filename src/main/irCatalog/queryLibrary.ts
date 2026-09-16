@@ -346,9 +346,18 @@ function buildWhereAndParams(
     params.push(...values)
   }
   if (options.kind != null) {
+    // Must match kindTag()'s own precedence in IrModeShell.tsx EXACTLY, or the row's own CAB/VERB
+    // badge and this filter silently disagree: when preset_kind is set, trust it ALONE — an
+    // unconditional `OR relative_path LIKE '%reverb%'` (the previous version of this clause) would
+    // classify every item under a folder like "EVENTIDE H8000 REVERB IRS" as reverb even when its
+    // own preset_kind explicitly says otherwise, so "Cab" would exclude items the badge itself
+    // shows as CAB. Only fall back to the folder-name heuristic when preset_kind is null/empty —
+    // NULLIF collapses '' to NULL the same way JS's `presetKind ? ... : ...` treats '' as falsy.
+    const presetKindExpr = `(SELECT preset_kind FROM ir_item WHERE ir_item.item_id = item.id)`
     const isReverbSql =
-      `((SELECT preset_kind FROM ir_item WHERE ir_item.item_id = item.id) LIKE '%reverb%' ` +
-      `OR item.relative_path LIKE '%reverb%')`
+      `(CASE WHEN NULLIF(${presetKindExpr}, '') IS NOT NULL ` +
+      `THEN ${presetKindExpr} LIKE '%reverb%' ` +
+      `ELSE item.relative_path LIKE '%reverb%' END)`
     clauses.push(options.kind === 'reverb' ? isReverbSql : `NOT ${isReverbSql}`)
   }
   return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params }
@@ -428,4 +437,59 @@ export function setFavorite(db: DatabaseSync, itemId: string, isFavorite: boolea
 
 export function setRating(db: DatabaseSync, itemId: string, rating: number | null): void {
   db.prepare('UPDATE item SET rating = ? WHERE id = ?').run(rating, itemId)
+}
+
+export interface SuggestionSourceRow {
+  id: string
+  relative_path: string
+  display_name: string
+  manufacturer: string | null
+  cabinet: string | null
+  speaker: string | null
+  microphone: string | null
+  position: string | null
+}
+
+/**
+ * Feed for the metadata suggestion engine (parity backlog item 20) — a separate, additive query
+ * rather than widening the browse SELECT above: suggestions need to know the item's OWN raw value
+ * (does it already have a manufacturer set, ignoring folder inheritance) so a rule doesn't
+ * "overwrite" a value that's actually just inherited, whereas the browse row deliberately shows
+ * the resolved/inherited value. Capped the same way queryForExport is — this walks a folder
+ * subtree, not the live-scrolled browse window, so there's no natural page size to reuse.
+ */
+const SUGGESTION_ROW_CAP = 5000
+
+export function queryItemsForSuggestions(
+  db: DatabaseSync,
+  options: { libraryRootId: number | null; folderId: number | null }
+): { rows: SuggestionSourceRow[]; truncated: boolean } {
+  const conditions = [IR_BROWSABLE_ITEM_SQL]
+  const params: SQLInputValue[] = []
+  if (options.libraryRootId != null) {
+    conditions.push('item.library_root_id = ?')
+    params.push(options.libraryRootId)
+  }
+  if (options.folderId != null) {
+    const scopeIds = resolveFolderScopeIds(db, options.folderId)
+    if (scopeIds.length === 0) return { rows: [], truncated: false }
+    conditions.push(`item.folder_id IN (${scopeIds.map(() => '?').join(',')})`)
+    params.push(...scopeIds)
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT item.id as id, item.relative_path as relative_path, item.display_name as display_name,
+              ir_item.manufacturer as manufacturer, ir_item.cabinet as cabinet,
+              ir_item.speaker as speaker, ir_item.microphone as microphone, ir_item.position as position
+       FROM item
+       LEFT JOIN ir_item ON ir_item.item_id = item.id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY item.relative_path
+       LIMIT ?`
+    )
+    .all(...params, SUGGESTION_ROW_CAP + 1) as unknown as SuggestionSourceRow[]
+
+  const truncated = rows.length > SUGGESTION_ROW_CAP
+  return { rows: truncated ? rows.slice(0, SUGGESTION_ROW_CAP) : rows, truncated }
 }

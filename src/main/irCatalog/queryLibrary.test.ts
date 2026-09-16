@@ -227,6 +227,52 @@ describe.skipIf(!hasFts5())('queryLibrary', () => {
     db.close()
   })
 
+  it('kind (Cab/Reverb) filter trusts an explicit preset_kind over a reverb-named folder path', () => {
+    // Reproduces a real report: browsing inside a folder like "EVENTIDE H8000 REVERB IRS", every
+    // item's relative_path contains "reverb" — the row's own CAB/VERB badge (kindTag() in
+    // IrModeShell.tsx) still shows CAB correctly because it trusts preset_kind when the item has
+    // one, but the OLD version of this filter ORed the folder-path match in unconditionally, so
+    // picking "Cab" excluded items the badge itself labeled CAB. This asserts the filter now
+    // matches the badge's own precedence exactly.
+    const db = new DatabaseSync(':memory:')
+    createSchema(db)
+    const now = new Date().toISOString()
+    const rootId = (
+      db
+        .prepare(`INSERT INTO library_root (path, label, watch_mode, created_at) VALUES ('/lib4','Lib4','manual',?) RETURNING id`)
+        .get(now) as { id: number }
+    ).id
+    const folder = (
+      db
+        .prepare(`INSERT INTO folder (library_root_id, parent_id, relative_path) VALUES (?, NULL, 'Eventide H8000 Reverb IRs') RETURNING id`)
+        .get(rootId) as { id: number }
+    ).id
+
+    const insertItem = (id: string, relPath: string): void => {
+      db.prepare(
+        `INSERT INTO item (id, kind, library_root_id, folder_id, relative_path, display_name, indexed_at, last_seen_at)
+         VALUES (?, 'ir', ?, ?, ?, ?, ?, ?)`
+      ).run(id, rootId, folder, relPath, relPath, now, now)
+    }
+    // Explicitly marked 'cab' by IR Lab, but sits in a reverb-named folder.
+    insertItem('item-explicit-cab', 'Eventide H8000 Reverb IRs/Blended Cab.wav')
+    db.prepare(`INSERT INTO ir_item (item_id, preset_kind) VALUES ('item-explicit-cab', 'cab')`).run()
+    // No preset_kind at all — falls back to the folder-name heuristic, genuinely a reverb IR here.
+    insertItem('item-no-preset-kind', 'Eventide H8000 Reverb IRs/Random Hall.wav')
+    db.prepare(`INSERT INTO ir_item (item_id) VALUES ('item-no-preset-kind')`).run()
+    // Explicitly marked 'reverb', sitting in a plain, non-reverb-named folder.
+    insertItem('item-explicit-reverb', 'Cabs/Weird One.wav')
+    db.prepare(`INSERT INTO ir_item (item_id, preset_kind) VALUES ('item-explicit-reverb', 'reverb')`).run()
+
+    const cabOnly = queryItems(db, { kind: 'cab', offset: 0, limit: 10 })
+    expect(cabOnly.map((r) => r.id)).toEqual(['item-explicit-cab'])
+
+    const reverbOnly = queryItems(db, { kind: 'reverb', offset: 0, limit: 10 })
+    expect(reverbOnly.map((r) => r.id).sort()).toEqual(['item-explicit-reverb', 'item-no-preset-kind'].sort())
+
+    db.close()
+  })
+
   it('cabinet/speaker fall back to the owning IR Lab Project when the item itself has no value', () => {
     const db = new DatabaseSync(':memory:')
     createSchema(db)

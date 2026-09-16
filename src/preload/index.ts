@@ -687,6 +687,11 @@ const api = {
     force?: boolean
   ): Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }> =>
     ipcRenderer.invoke('irLibrary:renameItem', itemId, newBaseName, force),
+  irLibraryRenameItemsBatch: (
+    renames: Array<{ itemId: string; newBaseName: string }>,
+    force?: boolean
+  ): Promise<Array<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }>> =>
+    ipcRenderer.invoke('irLibrary:renameItemsBatch', renames, force),
   irLibraryMoveItems: (
     itemIds: string[],
     destFolderId: number | null,
@@ -736,6 +741,75 @@ const api = {
     ipcRenderer.invoke('irLibrary:clearItemMetadata', itemId, field),
   irLibraryPromoteItemFieldToFolder: (itemId: string, field: string): Promise<{ success: boolean; itemsCleared: number }> =>
     ipcRenderer.invoke('irLibrary:promoteItemFieldToFolder', itemId, field),
+  irLibrarySetItemNumericField: (itemId: string, field: string, value: number | null): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('irLibrary:setItemNumericField', itemId, field, value),
+  irLibraryEmbedMetadataAllowed: (): Promise<boolean> => ipcRenderer.invoke('irLibrary:embedMetadataAllowed'),
+  irLibraryPreviewSpreadsheetImport: (
+    rows: Array<{ absPath: string; manufacturer?: string; cabinet?: string; speaker?: string; microphone?: string }>
+  ): Promise<
+    Array<{
+      absPath: string
+      itemId: string | null
+      displayName: string | null
+      changes: Array<{ field: string; label: string; oldValue: string; newValue: string }>
+      notFound: boolean
+    }>
+  > => ipcRenderer.invoke('irLibrary:previewSpreadsheetImport', rows),
+  irLibraryRenameNamCapture: (
+    itemId: string,
+    newBaseName: string,
+    force?: boolean
+  ): Promise<{ itemId: string; success: boolean; error?: string; newAbsPath?: string }> =>
+    ipcRenderer.invoke('irLibrary:renameNamCapture', itemId, newBaseName, force),
+  irLibraryQueryItemsForSuggestions: (options: {
+    libraryRootId: number | null
+    folderId: number | null
+  }): Promise<{
+    rows: Array<{
+      id: string
+      relative_path: string
+      display_name: string
+      manufacturer: string | null
+      cabinet: string | null
+      speaker: string | null
+      microphone: string | null
+      position: string | null
+    }>
+    truncated: boolean
+  }> => ipcRenderer.invoke('irLibrary:queryItemsForSuggestions', options),
+  irLibraryApplySpreadsheetImport: (
+    diffRows: Array<{
+      absPath: string
+      itemId: string | null
+      displayName: string | null
+      changes: Array<{ field: string; label: string; oldValue: string; newValue: string }>
+      notFound: boolean
+    }>
+  ): Promise<{ applied: number; failed: number }> => ipcRenderer.invoke('irLibrary:applySpreadsheetImport', diffRows),
+  irLibraryEmbedItemsMetadata: (
+    itemIds: string[]
+  ): Promise<{ allowed: boolean; results: Array<{ itemId: string; success: boolean; error?: string; truncatedDescription?: boolean }> }> =>
+    ipcRenderer.invoke('irLibrary:embedItemsMetadata', itemIds),
+  irLibraryGetItemDetail: (itemId: string): Promise<{
+    id: string
+    displayName: string
+    relativePath: string
+    notes: string | null
+    notesSource: string | null
+    rating: number | null
+    isFavorite: boolean
+    isReverb: boolean
+    isStereo: boolean
+    isTrueStereo: boolean
+    fields: Record<string, { value: string | null; source: string | null }>
+    micADistance: number | null
+    micAAxisAngleDeg: number | null
+    micBDistance: number | null
+    micBAxisAngleDeg: number | null
+    reverbRecommendedWetPercent: number | null
+    reverbRecommendedPreDelayMs: number | null
+    reverbDecaySeconds: number | null
+  } | null> => ipcRenderer.invoke('irLibrary:getItemDetail', itemId),
   irLibrarySendSessionToIrLab: (captureId: string): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendSessionToIrLab', captureId),
   irLibrarySendProjectToIrLab: (projectId: string, preset?: string): Promise<{ success: boolean; reason?: string }> =>

@@ -171,6 +171,35 @@ export interface MetadataSuggestScopedRuleSet {
   rules: MetadataSuggestRule[]
 }
 
+// IR filename suggestion rules (parity backlog item 20) — a deliberately smaller sibling of the
+// NAM rule engine above, not a reuse of its types: IR's field vocabulary is different
+// (manufacturer/cabinet/speaker/microphone/position, not gear_type/tone_type/nl_*), and IR has no
+// "capture name" distinct from its filename the way a NAM file's metadata.name is, so this engine
+// (utils/irMetadataSuggest.ts) only ever matches against the filename and folder path — no dual
+// filename/capture-name candidate logic, no per-folder scoped rule sets, no numeric field
+// coercion. `matchIn`/`matchType` are reused as-is from the NAM types above since neither is
+// actually NAM-specific in meaning.
+export const IR_METADATA_SUGGEST_FIELD_OPTIONS = [
+  { value: 'manufacturer', label: 'Manufacturer' },
+  { value: 'cabinet', label: 'Cabinet' },
+  { value: 'speaker', label: 'Speaker' },
+  { value: 'microphone', label: 'Microphone' },
+  { value: 'position', label: 'Position' }
+] as const
+export type IrMetadataSuggestField = (typeof IR_METADATA_SUGGEST_FIELD_OPTIONS)[number]['value']
+
+export interface IrMetadataSuggestRule {
+  id: string
+  token: string
+  segmentIndex: number | null
+  field: IrMetadataSuggestField
+  value: string
+  matchIn: MetadataSuggestMatchIn
+  matchType: MetadataSuggestMatchType
+  enabled: boolean
+  overwriteExisting: boolean
+}
+
 export const DEFAULT_PACK_CHECKLIST_TEMPLATE: PackChecklistTemplateItem[] = [
   { id: 'all-captures-completed', label: 'All captures completed' },
   { id: 'test-all-captures-in-nam-player', label: 'Test all captures in NAM Player; remove weak/duplicate profiles' },
@@ -398,6 +427,14 @@ export interface AppSettings {
   delayLibraryPath: string
   /** Cabinet mix 0..1 applied after the model. 1 = fully wet (cab only). */
   irMix: number
+  // Off by default (locked behind an explicit opt-in, not just a button someone can click without
+  // reading anything) — see IrItemDetailPanel.tsx's own comment on why this is gated at all. This
+  // writes into the WAV file itself (a bext chunk), unlike every other IR metadata field in this
+  // app, which lives only in the SQLite catalog and never touches the file on disk.
+  irAllowEmbedMetadataInFile: boolean
+  // Flat list (no per-folder scoping — see IrMetadataSuggestRule's own comment for why) — a rule
+  // fires wherever "Suggest Metadata…" is run, and that action itself is what's folder-scoped.
+  irMetadataSuggestRuleLibrary: IrMetadataSuggestRule[]
 
   // NAM Standalone
   namStandalonePath: string
@@ -542,6 +579,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reverbLibraryPath: '',
   delayLibraryPath: '',
   irMix: 1,
+  irAllowEmbedMetadataInFile: false,
+  irMetadataSuggestRuleLibrary: [],
   namStandalonePath: '',
   // On by default: training is no longer the risky corner it was when this flag was added, and
   // defaulting it off meant a fresh install hid the Training tab until someone knew to go looking

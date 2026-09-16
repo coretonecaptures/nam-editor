@@ -73,6 +73,7 @@ export function DataGrid<T>({
   storageKey,
   selectedIds,
   onSelectionChange,
+  resolveRangeIds,
   onRowOpen,
   onRowContextMenu,
   rowActions,
@@ -101,6 +102,12 @@ export function DataGrid<T>({
   /** Omit to render without a selection column. */
   selectedIds?: Set<string>
   onSelectionChange?: (ids: string[]) => void
+  /** Controlled mode only: resolves every id between two row indices, fetching whatever hasn't
+   * been scrolled into `getRow`'s cache yet — without this, a shift-click range in controlled
+   * mode silently drops any index the virtualizer never happened to load (see IrModeShell.tsx's
+   * own `resolveRangeIds`, which this is designed to take). Client mode never needs this — its
+   * full row array always has every index already. */
+  resolveRangeIds?: (lo: number, hi: number) => Promise<string[]>
   onRowOpen?: (row: T) => void
   onRowContextMenu?: (row: T, x: number, y: number) => void
   rowActions?: (row: T) => React.ReactNode
@@ -221,14 +228,29 @@ export function DataGrid<T>({
     [sortKey, sortDir, onSortChange]
   )
 
-  // ── selection (client mode only) ────────────────────────────────────────
+  // ── selection ────────────────────────────────────────────────────────────
+  // Client mode indexes the full sorted array; controlled (virtualised) mode has no such array —
+  // only whatever's been windowed into the cache — so id lookups there go through getRow(index)
+  // instead. rowIdAt() is the one seam both selectOne and shift-range click go through, so
+  // controlled grids (IR's "#" view) get the same shift/ctrl-click selection client grids do.
   const anchorRef = useRef<number>(-1)
   const idList = useMemo(() => (controlled ? [] : sorted.map(getRowId)), [controlled, sorted, getRowId])
+  const rowIdAt = useCallback(
+    (index: number): string | undefined => {
+      if (controlled) {
+        const row = getRow?.(index)
+        return row ? getRowId(row) : undefined
+      }
+      return idList[index]
+    },
+    [controlled, getRow, getRowId, idList]
+  )
   const selectOne = useCallback(
     (index: number, additive: boolean) => {
       if (!selectable) return
+      const id = rowIdAt(index)
+      if (id == null) return
       anchorRef.current = index
-      const id = idList[index]
       if (additive) {
         const next = new Set(selectedIds)
         next.has(id) ? next.delete(id) : next.add(id)
@@ -237,7 +259,7 @@ export function DataGrid<T>({
         onSelectionChange?.([id])
       }
     },
-    [selectable, idList, selectedIds, onSelectionChange]
+    [selectable, rowIdAt, selectedIds, onSelectionChange]
   )
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -441,6 +463,8 @@ export function DataGrid<T>({
             type="checkbox"
             checked={!controlled && sorted.length > 0 && sorted.every((r) => selectedIds!.has(getRowId(r)))}
             onChange={(e) => onSelectionChange?.(e.target.checked ? idList : [])}
+            disabled={controlled}
+            title={controlled ? 'Select-all-loaded is Ctrl/Cmd+A here — this checkbox only knows the client-side row set' : undefined}
           />
         </div>
       )}
@@ -619,7 +643,16 @@ export function DataGrid<T>({
           if (selectable && e.shiftKey) {
             const from = anchorRef.current < 0 ? index : anchorRef.current
             const [lo, hi] = from < index ? [from, index] : [index, from]
-            onSelectionChange?.(idList.slice(lo, hi + 1))
+            if (resolveRangeIds) {
+              void resolveRangeIds(lo, hi).then((ids) => onSelectionChange?.(ids))
+            } else {
+              const range = new Set<string>()
+              for (let i = lo; i <= hi; i++) {
+                const id = rowIdAt(i)
+                if (id != null) range.add(id)
+              }
+              onSelectionChange?.([...range])
+            }
           } else if (selectable && (e.ctrlKey || e.metaKey)) {
             selectOne(index, true)
           } else {

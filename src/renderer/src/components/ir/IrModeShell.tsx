@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { VirtualList } from './VirtualList'
 import { IrFolderTree } from './IrFolderTree'
 import { IrRightPanel } from './IrRightPanel'
@@ -21,7 +21,12 @@ import { CoveragePlannerModal } from './CoveragePlannerModal'
 import { IrMoveToFolderModal } from './IrMoveToFolderModal'
 import { IrBatchRenameModal } from './IrBatchRenameModal'
 import { IrEditMetadataModal } from './IrEditMetadataModal'
-import { IrBatchMetadataEditModal } from './IrBatchMetadataEditModal'
+import { IrMultiSelectEditor } from './IrMultiSelectEditor'
+import { IrHelpModal } from './IrHelpModal'
+import { IrItemDetailPanel } from './IrItemDetailPanel'
+import { IrSpreadsheetImportModal } from './IrSpreadsheetImportModal'
+import { IrMetadataSuggestRulesModal } from './IrMetadataSuggestRulesModal'
+import { IrApplySuggestionsModal } from './IrApplySuggestionsModal'
 import { IrLibraryCleanupModal } from './IrLibraryCleanupModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
@@ -81,12 +86,16 @@ const ROW_HEIGHT = 56
 // Shared between the list header and every data row so their columns actually line up: type-tag |
 // name+maker | format | length | mic/space | position. Checkbox, size, and the action icons stay
 // their own flex siblings around this grid (unchanged from before), not part of it.
-const IR_ROW_GRID = '32px minmax(160px,1.6fr) 118px 56px 64px minmax(90px,1fr)'
+const IR_ROW_GRID = '32px minmax(160px,2.4fr) 118px 56px 64px minmax(90px,0.5fr)'
 // Reserved width for the trailing favorite/play/play-live icon buttons (each ~36px, gap-3 between
 // them, the parent row's own gap-3 in front) -- the header row needs a matching spacer after its
 // "Size" label so the header text actually sits above the size VALUES, not past them.
 const IR_ROW_ACTIONS_WIDTH = 116
 const PAGE_SIZE = 200
+
+// Toggle back on to restore the top-bar root picker — see its render site's own comment for why
+// it's off (redundant with the folder tree, which already scopes by root+folder together).
+const SHOW_ROOT_PICKER = false
 
 const IR_SORT_LS_KEY = 'nam-lab-ir-sort'
 export const IR_SORT_KEYS = ['name', 'size', 'rate', 'depth', 'duration', 'favorite', 'missing'] as const
@@ -159,6 +168,13 @@ function PlainFieldText({
   return (
     <button
       onClick={(e) => {
+        // A shift/ctrl/cmd-click here was almost always meant for the ROW (range/toggle
+        // multi-select), not this field's own facet-toggle — this label sits right under the
+        // item name, the single most natural place to land a selection click. Swallowing every
+        // click unconditionally (the previous behavior) silently broke ctrl/shift-click multi-
+        // select any time it landed on the manufacturer or mic/space text. Let a modified click
+        // bubble up to the row's own handler instead of intercepting it here.
+        if (e.shiftKey || e.ctrlKey || e.metaKey) return
         e.stopPropagation()
         onClick?.()
       }}
@@ -229,6 +245,7 @@ const IR_GRID_COLUMNS: DataGridColumn<IrItemRow>[] = [
  */
 export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): React.ReactElement {
   const [showSettings, setShowSettings] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [appSettings, setAppSettings] = useState<AppSettings>(loadSettings)
   const [roots, setRoots] = useState<LibraryRoot[]>([])
   const [scanning, setScanning] = useState(false)
@@ -304,7 +321,19 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [trashBusy, setTrashBusy] = useState(false)
   const [showBatchRename, setShowBatchRename] = useState(false)
   const [editMetadataRow, setEditMetadataRow] = useState<IrItemRow | null>(null)
-  const [batchEditRows, setBatchEditRows] = useState<IrItemRow[] | null>(null)
+  const [embedBatchBusy, setEmbedBatchBusy] = useState(false)
+  const [embedBatchMessage, setEmbedBatchMessage] = useState<string | null>(null)
+  const [showSpreadsheetImport, setShowSpreadsheetImport] = useState(false)
+  const [showSuggestRules, setShowSuggestRules] = useState(false)
+  const [showApplySuggestions, setShowApplySuggestions] = useState(false)
+  const updateSuggestRules = useCallback(
+    (nextRules: typeof appSettings.irMetadataSuggestRuleLibrary) => {
+      const updated = { ...appSettings, irMetadataSuggestRuleLibrary: nextRules }
+      setAppSettings(updated)
+      saveSettings(updated)
+    },
+    [appSettings]
+  )
   const [showLibraryCleanup, setShowLibraryCleanup] = useState(false)
   // Multi-select (parity backlog item 9's real prerequisite — items 4/5/6 deliberately scoped to
   // single-item pending this, with the array-shaped IPC already in place). Ctrl/Cmd-click toggles,
@@ -340,6 +369,11 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
+
+  // Toolbar groups (Import/Library/Metadata) — folds what used to be ~13 flat top-bar buttons
+  // into a handful of grouped dropdowns, same relative/absolute menu idiom Saved Searches and
+  // Export already use just below. Only one group open at a time.
+  const [openGroupMenu, setOpenGroupMenu] = useState<'import' | 'library' | 'metadata' | null>(null)
 
   // Saved searches (audit finding B6) — a named filter/facet combination, re-run live against
   // whatever the catalog looks like now, distinct from a Group (a static list of specific items).
@@ -582,6 +616,52 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     [renamingId, renameDraft]
   )
 
+  // Grid/table view ("#") reuses IR_GRID_COLUMNS' plain-text 'name' column definition for
+  // everything (value/sort/filter) but swaps in an inline-editable cell when that row is the one
+  // being renamed — same renamingId/renameDraft/commitRename/cancelRename state F2 and the list
+  // view's own inline rename already use, so grid view isn't a second rename implementation.
+  const irGridColumns = useMemo<DataGridColumn<IrItemRow>[]>(
+    () =>
+      IR_GRID_COLUMNS.map((col) => {
+        if (col.key !== 'name') return col
+        return {
+          ...col,
+          render: (row: IrItemRow) => {
+            if (renamingId !== row.id) return col.getValue(row) || <span className="text-nm-text-3">—</span>
+            return (
+              <div className="flex flex-col gap-0.5" onClick={(e) => e.stopPropagation()}>
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  disabled={renameBusy}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  onBlur={() => void commitRename()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
+                    else if (e.key === 'Escape') { e.preventDefault(); cancelRename() }
+                    e.stopPropagation()
+                  }}
+                  className="text-xs px-1 py-0.5 -mx-1 rounded border border-nm-accent bg-field-bg text-nm-text w-full"
+                />
+                {renameError && (
+                  <div className="text-[10px] text-red-500 flex items-center gap-2">
+                    {renameError}
+                    {renameError.includes('already exists') && (
+                      <button onClick={() => void commitRename(true)} className="text-nm-accent hover:underline flex-shrink-0">
+                        Overwrite
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          }
+        }
+      }),
+    [renamingId, renameDraft, renameBusy, renameError, commitRename, cancelRename]
+  )
+
   const handleMoved = useCallback((results: Array<{ itemId: string; success: boolean }>) => {
     const moved = results.filter((r) => r.success).length
     setImportResult(
@@ -802,14 +882,50 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   // open this also swaps the cabinet as you move, which is the whole point — step down the list
   // and hear each IR. Ignored while a text input has focus so it doesn't fight the search box's
   // own cursor keys.
+  // "Every currently loaded row" is scoped to what's actually in cacheRef -- the same scope the
+  // context menu's own menuRows already uses for a multi-row action, not a fresh unbounded query
+  // against the full (282K-row) catalog. Declared here (ahead of the keydown effect below) so
+  // Ctrl+A can list it as a dependency without a TDZ reference.
+  const toggleCheckAll = useCallback((ids: string[]) => {
+    setSelectedIds((prev) => (ids.length > 0 && ids.every((id) => prev.has(id)) ? new Set() : new Set(ids)))
+  }, [])
+
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       const active = document.activeElement
       if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return
       if (total === 0) return
 
-      if (e.key === 'F2' && focusedIndex != null) {
-        const row = cacheRef.current.get(focusedIndex)
+      // Select all CURRENTLY LOADED rows, not "everything matching the filter" — this list is a
+      // paginated live query, not a bounded array, so a real Ctrl+A would mean "select all
+      // 40,000 rows in this filter" (unbounded, and item 9's own doc note explains why that's
+      // worse than no shortcut). "Loaded" is the same bounded scope toggleCheckAll's header
+      // checkbox and the context menu's own multi-row actions already use. Works in both list and
+      // grid/table view — grid view's own DataGrid has no id of its own to select all against in
+      // controlled mode, so this is the one mechanism for both.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        toggleCheckAll([...cacheRef.current.values()].map((r) => r.id))
+        return
+      }
+
+      // Grid/table view ("#") has no focusedIndex of its own — DataGrid tracks its anchor
+      // internally and only reports selectedIds — so F2/Delete there fall back to "the one row
+      // that's selected" rather than doing nothing outside list view.
+      const resolveActiveRow = (): IrItemRow | null => {
+        if (focusedIndex != null) {
+          const r = cacheRef.current.get(focusedIndex)
+          if (r) return r
+        }
+        if (selectedIds.size === 1) {
+          const id = [...selectedIds][0]
+          for (const r of cacheRef.current.values()) if (r.id === id) return r
+        }
+        return null
+      }
+
+      if (e.key === 'F2') {
+        const row = resolveActiveRow()
         if (row) {
           e.preventDefault()
           startRename(row)
@@ -817,7 +933,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         return
       }
 
-      if (e.key === 'Delete' && focusedIndex != null) {
+      if (e.key === 'Delete') {
         if (selectedIds.size > 1) {
           const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id) && !r.missing_since)
           if (rows.length > 0) {
@@ -826,7 +942,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           }
           return
         }
-        const row = cacheRef.current.get(focusedIndex)
+        const row = resolveActiveRow()
         if (row && !row.missing_since) {
           e.preventDefault()
           setTrashConfirmRows([row])
@@ -852,7 +968,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total, playerIr, focusedIndex, startRename, selectedIds])
+  }, [total, playerIr, focusedIndex, startRename, selectedIds, toggleCheckAll])
 
   const handleAddFolder = useCallback(async () => {
     const folder = await window.api.openFolder()
@@ -1001,6 +1117,27 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     [missingFileInfo, roots, handleLibraryChanged]
   )
 
+  // Same filter shape queryItems() takes (minus offset/limit) — the one payload export, saved
+  // searches, and the shift-click range fetch below all serialize/reuse, so a saved search
+  // reapplies exactly what was on screen when saved. Declared ahead of onVisibleRangeChange/
+  // resolveRangeIds so both can list it as a dependency without a TDZ reference.
+  const currentFilterPayload = useCallback(
+    () => ({
+      libraryRootId: selectedRootId,
+      folderId: selectedFolderId,
+      search: search || undefined,
+      favoritesOnly: favoritesOnly || undefined,
+      minRating: ratedOnly ? 1 : undefined,
+      tagId: tagFilterId ?? undefined,
+      ...facets,
+      ...audioFacets,
+      kind: kindFilter ?? undefined,
+      sort: sortKey,
+      sortDir
+    }),
+    [selectedRootId, selectedFolderId, search, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, sortKey, sortDir]
+  )
+
   const onVisibleRangeChange = useCallback(
     (start: number, end: number) => {
       const missingStart = start
@@ -1049,6 +1186,54 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         })
     },
     [search, total, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, selectedRootId, sortKey, sortDir]
+  )
+
+  // Shift-click range selection needs every id between the anchor and the clicked row — but
+  // cacheRef is a SPARSE virtualization cache (VirtualList only ever fetches what's actually been
+  // scrolled into view), so a plain `cacheRef.current.get(i)` loop silently drops any index that
+  // was never scrolled through, making a distant shift-click select far fewer rows than the user
+  // clicked across. Fetches exactly the missing slice of the range (one query, same filter payload
+  // every other fetch here already uses) and merges it into the cache before resolving, so the
+  // range is complete regardless of scroll history. Capped the same way other bulk-scope actions in
+  // this file are (IrBatchRenameModal's MAX_ITEMS) — an accidental shift-click across the entire
+  // library shouldn't try to fetch and select hundreds of thousands of rows in one click.
+  const MAX_RANGE_SELECT = 5000
+  const resolveRangeIds = useCallback(
+    async (lo: number, hi: number): Promise<string[]> => {
+      const cappedHi = Math.min(hi, lo + MAX_RANGE_SELECT - 1)
+      let hasMissing = false
+      for (let i = lo; i <= cappedHi; i++) {
+        if (!cacheRef.current.has(i)) {
+          hasMissing = true
+          break
+        }
+      }
+      if (hasMissing) {
+        const epoch = requestEpochRef.current
+        try {
+          const res = await window.api.irLibraryQuery({
+            ...currentFilterPayload(),
+            offset: lo,
+            limit: cappedHi - lo + 1
+          })
+          if (requestEpochRef.current === epoch) {
+            setTotal(res.total)
+            res.rows.forEach((row, i) => cacheRef.current.set(lo + i, row))
+            forceRerender((n) => n + 1)
+          }
+        } catch {
+          // Fall through and return whatever's already cached — a failed range fetch shouldn't
+          // throw out of a click handler.
+        }
+      }
+      const ids: string[] = []
+      for (let i = lo; i <= cappedHi; i++) {
+        const r = cacheRef.current.get(i)
+        if (r) ids.push(r.id)
+      }
+      return ids
+    },
+    [currentFilterPayload]
   )
 
   // Fires once per search/folder/filter change to establish `total` even before the list scrolls
@@ -1114,23 +1299,19 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     [selectedRootId, search, selectedFolderId, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, sortKey, sortDir]
   )
 
-  // Same filter shape queryItems() takes (minus offset/limit) — the one payload both export and
-  // saved searches serialize, so a saved search reapplies exactly what was on screen when saved.
-  const currentFilterPayload = useCallback(
-    () => ({
-      libraryRootId: selectedRootId,
-      folderId: selectedFolderId,
-      search: search || undefined,
-      favoritesOnly: favoritesOnly || undefined,
-      minRating: ratedOnly ? 1 : undefined,
-      tagId: tagFilterId ?? undefined,
-      ...facets,
-      ...audioFacets,
-      kind: kindFilter ?? undefined,
-      sort: sortKey,
-      sortDir
-    }),
-    [selectedRootId, selectedFolderId, search, favoritesOnly, ratedOnly, tagFilterId, facets, audioFacets, kindFilter, sortKey, sortDir]
+  // "Export current scope OR current selection" (parity backlog item 18's own "Done when" — the
+  // scope half above already existed; this is the selection half). No IPC round trip needed: every
+  // selected row is already loaded in cacheRef (you can't check a row's box without it having been
+  // rendered/fetched first), so this is a pure client-side filter of what's already in hand.
+  const exportSelection = useCallback(
+    (format: 'csv' | 'xlsx') => {
+      setShowExportMenu(false)
+      const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id))
+      const filename = `ir-selection.${format}`
+      if (format === 'csv') exportIrCatalogCSV(rows, filename)
+      else exportIrCatalogXLSX(rows, filename)
+    },
+    [selectedIds]
   )
 
   const applySavedSearch = useCallback((filterJson: string) => {
@@ -1185,12 +1366,6 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       else next.add(id)
       return next
     })
-  }, [])
-  // "Every currently visible row" is scoped to what's actually in cacheRef -- the same scope the
-  // context menu's own menuRows already uses for a multi-row action, not a fresh unbounded query
-  // against the full (282K-row) catalog.
-  const toggleCheckAll = useCallback((ids: string[]) => {
-    setSelectedIds((prev) => (ids.length > 0 && ids.every((id) => prev.has(id)) ? new Set() : new Set(ids)))
   }, [])
   const bulkSetFavorite = useCallback(
     (fav: boolean) => {
@@ -1328,6 +1503,50 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     [panelWidth, treeWidth]
   )
 
+  // Which row the docked item detail panel shows, per this file's own longstanding comment on
+  // rowTintClass ("Focused ... drives the detail/right panel"): a plain click always sets
+  // focusedIndex (and clears selectedIds — see the row's own onClick), so the last-clicked row
+  // drives the panel regardless of checkbox state; checking exactly one box also counts, since
+  // that's still "one item, show it," not "a batch." selectedIds.size > 1 is handled separately
+  // above this in the render (the batch view), so this only needs to resolve the single case.
+  const detailItemId = selectedIds.size === 1 ? [...selectedIds][0] : focusedIndex != null ? cacheRef.current.get(focusedIndex)?.id : undefined
+  const detailRow = detailItemId ? [...cacheRef.current.values()].find((r) => r.id === detailItemId) ?? null : null
+
+  // Same invalidate-and-refetch used after a move/trash (handleMoved/confirmTrash) — a metadata
+  // edit can change which facet/sort bucket a row falls into, so patching the cached row in place
+  // isn't safe here the way rename's single-field patch is.
+  const invalidateAndRefetch = (): void => {
+    requestEpochRef.current++
+    cacheRef.current = new Map()
+    pendingRef.current = new Set()
+    forceRerender((n) => n + 1)
+  }
+
+  // Batch "Embed in File" for the multi-select docked panel (G3, docs/ir-metadata-full-parity-
+  // proposal-2026-09-13.md) — the panel itself checks allowed-ness at click time rather than
+  // holding it in state, since this button only exists while >1 item is selected, a state that
+  // doesn't persist long enough to be worth a mount-time fetch the way IrItemDetailPanel's does.
+  const embedSelectionInFiles = async (): Promise<void> => {
+    setEmbedBatchBusy(true)
+    setEmbedBatchMessage(null)
+    try {
+      const { allowed, results } = await window.api.irLibraryEmbedItemsMetadata([...selectedIds])
+      if (!allowed) {
+        setEmbedBatchMessage('Turned off in Settings — enable it under Player → IR Catalog Metadata first.')
+        return
+      }
+      const succeeded = results.filter((r) => r.success).length
+      setEmbedBatchMessage(
+        succeeded === results.length
+          ? `Embedded into ${succeeded} file${succeeded === 1 ? '' : 's'}.`
+          : `Embedded into ${succeeded} of ${results.length} — see console for individual errors.`
+      )
+      if (succeeded < results.length) console.warn('Embed metadata failures:', results.filter((r) => !r.success))
+    } finally {
+      setEmbedBatchBusy(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-screen bg-app-bg text-nm-text overflow-hidden">
       <div
@@ -1349,56 +1568,153 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           {scanning ? 'Scanning…' : 'Add Library Folder'}
         </button>
         <button
-          onClick={handleImportLabProjects}
-          disabled={scanning}
-          className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
-        >
-          Import Projects…
-        </button>
-        <button
           onClick={() => void handleRescan()}
           disabled={scanning || roots.length === 0}
           className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50"
         >
           Rescan
         </button>
-        {hasAnyRoot && (
+        <div className="relative flex-shrink-0">
           <button
-            onClick={() => setShowDuplicates(true)}
-            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
-            title="Find byte-identical IRs across this scope"
+            onClick={() => setOpenGroupMenu((v) => (v === 'import' ? null : 'import'))}
+            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex items-center gap-1"
           >
-            Duplicates
+            Import
+            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+            </svg>
           </button>
+          {openGroupMenu === 'import' && (
+            <div
+              onMouseLeave={() => setOpenGroupMenu(null)}
+              className="absolute left-0 top-full mt-1 w-56 bg-panel border border-field-bd rounded shadow-xl z-50 py-1"
+            >
+              <button
+                onClick={() => {
+                  setOpenGroupMenu(null)
+                  handleImportLabProjects()
+                }}
+                disabled={scanning}
+                className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov disabled:opacity-50"
+              >
+                Import Lab Projects…
+              </button>
+              {hasAnyRoot && (
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowSpreadsheetImport(true)
+                  }}
+                  title="Import metadata from an edited spreadsheet (round-trips an Export)"
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  Import from Spreadsheet…
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {hasAnyRoot && (
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setOpenGroupMenu((v) => (v === 'library' ? null : 'library'))}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex items-center gap-1"
+            >
+              Library
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            {openGroupMenu === 'library' && (
+              <div
+                onMouseLeave={() => setOpenGroupMenu(null)}
+                className="absolute left-0 top-full mt-1 w-56 bg-panel border border-field-bd rounded shadow-xl z-50 py-1"
+              >
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowDuplicates(true)
+                  }}
+                  title="Find byte-identical IRs across this scope"
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  Duplicates…
+                </button>
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowCoveragePlanner(true)
+                  }}
+                  title="Find mic/position combos other cabinets have that this one doesn't"
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  Coverage Planner…
+                </button>
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowBatchRename(true)
+                  }}
+                  disabled={selectedFolderId == null}
+                  title={selectedFolderId == null ? 'Select a folder in the tree first' : 'Rename every IR in this folder from a template'}
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov disabled:opacity-40"
+                >
+                  Batch Rename…
+                </button>
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowLibraryCleanup(true)
+                  }}
+                  disabled={selectedFolderId == null && selectedRootId == null}
+                  title="Restructure this scope into a new folder layout, with a preview before anything moves"
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov disabled:opacity-40"
+                >
+                  Build Library…
+                </button>
+              </div>
+            )}
+          </div>
         )}
         {hasAnyRoot && (
-          <button
-            onClick={() => setShowCoveragePlanner(true)}
-            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
-            title="Find mic/position combos other cabinets have that this one doesn't"
-          >
-            Coverage Planner…
-          </button>
-        )}
-        {hasAnyRoot && (
-          <button
-            onClick={() => setShowBatchRename(true)}
-            disabled={selectedFolderId == null}
-            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
-            title={selectedFolderId == null ? 'Select a folder in the tree first' : 'Rename every IR in this folder from a template'}
-          >
-            Batch Rename…
-          </button>
-        )}
-        {hasAnyRoot && (
-          <button
-            onClick={() => setShowLibraryCleanup(true)}
-            disabled={selectedFolderId == null && selectedRootId == null}
-            className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
-            title="Restructure this scope into a new folder layout, with a preview before anything moves"
-          >
-            Build Library…
-          </button>
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setOpenGroupMenu((v) => (v === 'metadata' ? null : 'metadata'))}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov flex items-center gap-1"
+            >
+              Metadata
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            {openGroupMenu === 'metadata' && (
+              <div
+                onMouseLeave={() => setOpenGroupMenu(null)}
+                className="absolute left-0 top-full mt-1 w-56 bg-panel border border-field-bd rounded shadow-xl z-50 py-1"
+              >
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowApplySuggestions(true)
+                  }}
+                  title={`Run filename/folder suggestion rules against ${selectedFolderId != null ? 'the selected folder' : 'the whole library'}`}
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  Suggest Metadata…
+                </button>
+                <button
+                  onClick={() => {
+                    setOpenGroupMenu(null)
+                    setShowSuggestRules(true)
+                  }}
+                  title="Manage the filename/folder-path rules Suggest Metadata runs"
+                  className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                >
+                  Suggestion Rules…
+                </button>
+              </div>
+            )}
+          </div>
         )}
         {hasAnyRoot && (
           <button
@@ -1502,6 +1818,26 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 >
                   Excel (.xlsx)
                 </button>
+                {selectedIds.size > 0 && (
+                  <>
+                    <div className="my-1 border-t border-nm-border-s" />
+                    <div className="px-3 py-1 text-[10px] text-nm-text-3 uppercase tracking-wide">
+                      Selected ({selectedIds.size})
+                    </div>
+                    <button
+                      onClick={() => exportSelection('csv')}
+                      className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                    >
+                      CSV
+                    </button>
+                    <button
+                      onClick={() => exportSelection('xlsx')}
+                      className="w-full text-left px-3 py-1.5 text-xs text-nm-text-2 hover:bg-hov"
+                    >
+                      Excel (.xlsx)
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1528,7 +1864,13 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             </button>
           </div>
         )}
-        {roots.length > 1 && (
+        {/* Hidden for now (2026-09-15, SHOW_ROOT_PICKER) — mostly redundant with the folder tree,
+            which already shows every root as its own branch and lets you scope by clicking into a
+            folder; this dropdown only ever mattered for "All roots" search-everything or "one
+            whole root, no folder picked," both edge cases next to the tree. `selectedRootId` and
+            everything that reads it (activeRootId fallback, bulk-tool default scope) stays wired
+            exactly as before — only the picker itself is hidden, not the underlying scoping. */}
+        {SHOW_ROOT_PICKER && roots.length > 1 && (
           <select
             value={selectedRootId ?? ''}
             onChange={(e) => setSelectedRootId(e.target.value ? Number(e.target.value) : null)}
@@ -1555,6 +1897,18 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             </button>
           )}
           <button
+            onClick={() => setShowHelp(true)}
+            className={`tb-menu-btn ${showHelp ? 'active' : ''}`}
+            title="Help — IR and NAM Projects guides"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <circle cx="12" cy="12" r="9" strokeWidth="1.8" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M9.4 9.2a2.7 2.7 0 115.06 1.35c0 .84-.42 1.35-1.06 1.86-.61.48-1.17.96-1.17 1.96" />
+              <circle cx="12" cy="17.2" r="0.7" fill="currentColor" stroke="none" />
+            </svg>
+            Help
+          </button>
+          <button
             onClick={() => setShowSettings(true)}
             className={`tb-menu-btn ${showSettings ? 'active' : ''}`}
             title="Settings"
@@ -1568,11 +1922,35 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
         </div>
       </div>
       </div>
+      {showHelp && <IrHelpModal initialTab="ir" onClose={() => setShowHelp(false)} />}
       {showSettings && (
         <SettingsPanel
           settings={appSettings}
           onSave={(s) => { setAppSettings(s); saveSettings(s); setShowSettings(false) }}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showSpreadsheetImport && (
+        <IrSpreadsheetImportModal
+          onClose={() => setShowSpreadsheetImport(false)}
+          onApplied={invalidateAndRefetch}
+        />
+      )}
+      {showSuggestRules && (
+        <IrMetadataSuggestRulesModal
+          rules={appSettings.irMetadataSuggestRuleLibrary}
+          onChange={updateSuggestRules}
+          onClose={() => setShowSuggestRules(false)}
+        />
+      )}
+      {showApplySuggestions && (
+        <IrApplySuggestionsModal
+          libraryRootId={selectedRootId}
+          folderId={selectedFolderId}
+          scopeLabel={selectedFolderId != null ? `${selectedFolderName} and its subfolders` : selectedRootId != null ? roots.find((r) => r.id === selectedRootId)?.label || 'This library root' : 'Whole library'}
+          rules={appSettings.irMetadataSuggestRuleLibrary}
+          onClose={() => setShowApplySuggestions(false)}
+          onApplied={invalidateAndRefetch}
         />
       )}
       {showDuplicates && (
@@ -1633,18 +2011,6 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           row={editMetadataRow}
           displayName={editMetadataRow.display_name}
           onClose={() => setEditMetadataRow(null)}
-          onSaved={() => {
-            requestEpochRef.current++
-            cacheRef.current = new Map()
-            pendingRef.current = new Set()
-            forceRerender((n) => n + 1)
-          }}
-        />
-      )}
-      {batchEditRows && batchEditRows.length > 0 && (
-        <IrBatchMetadataEditModal
-          itemIds={batchEditRows.map((r) => r.id)}
-          onClose={() => setBatchEditRows(null)}
           onSaved={() => {
             requestEpochRef.current++
             cacheRef.current = new Map()
@@ -1807,9 +2173,12 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 onRangeChange={onVisibleRangeChange}
                 rowHeight={40}
                 getRowId={(r) => r.id}
-                columns={IR_GRID_COLUMNS}
+                columns={irGridColumns}
                 storageKey="ir-library-grid"
                 disableColumnFilters
+                selectedIds={selectedIds}
+                onSelectionChange={(ids) => setSelectedIds(new Set(ids))}
+                resolveRangeIds={resolveRangeIds}
                 sort={{ key: sortKey, dir: sortDir }}
                 onSortChange={(k, d) => {
                   if ((IR_SORT_KEYS as readonly string[]).includes(k)) {
@@ -1839,9 +2208,9 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                         </button>
                         <button
                           onClick={() => {
-                            const rows = [...cacheRef.current.values()].filter((r) => selectedIds.has(r.id))
-                            if (rows.length) setBatchEditRows(rows)
+                            if (!panelOpen) setPanelOpen(true)
                           }}
+                          title="Edit fields for the selection in the docked panel"
                           className="text-xs font-medium text-nm-accent hover:underline"
                         >
                           Tag…
@@ -1923,12 +2292,10 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   if (e.shiftKey && selectionAnchorRef.current >= 0) {
                     const lo = Math.min(selectionAnchorRef.current, index)
                     const hi = Math.max(selectionAnchorRef.current, index)
-                    const ranged = new Set<string>()
-                    for (let i = lo; i <= hi; i++) {
-                      const r = cacheRef.current.get(i)
-                      if (r) ranged.add(r.id)
-                    }
-                    setSelectedIds(ranged)
+                    // resolveRangeIds fetches whatever indices in [lo,hi] haven't been scrolled
+                    // into cacheRef yet, so a shift-click across a range you haven't scrolled
+                    // through selects everything in it, not just the handful already cached.
+                    void resolveRangeIds(lo, hi).then((ids) => setSelectedIds(new Set(ids)))
                   } else if (e.ctrlKey || e.metaKey) {
                     setSelectedIds((prev) => {
                       const next = new Set(prev)
@@ -2241,6 +2608,24 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                   Cancel
                 </button>
               </div>
+            ) : selectedIds.size > 1 ? (
+              // Multi-select docked editor (parity backlog item 9's docked counterpart to NAM
+              // mode's MultiSelectEditor) — full field parity with IrItemDetailPanel, shared/varies
+              // detection, and a confirmed Apply, in place of the old 7-field checkbox modal.
+              <IrMultiSelectEditor
+                itemIds={[...selectedIds]}
+                onSaved={invalidateAndRefetch}
+                skipConfirmation={settings.skipBatchEditConfirmation === true}
+                embedBusy={embedBatchBusy}
+                embedMessage={embedBatchMessage}
+                onEmbed={() => void embedSelectionInFiles()}
+              />
+            ) : detailRow ? (
+              // Single-item detail (parity backlog items 7/8's docked counterpart to NAM mode's
+              // MetadataEditor — see docs/ir-metadata-full-parity-proposal-2026-09-13.md's G1/G2).
+              // Driven by focusedIndex/selectedIds the same way the row highlight comment above
+              // already documented this panel slot as intending to work.
+              <IrItemDetailPanel row={detailRow} onSaved={invalidateAndRefetch} onTogglePanel={togglePanelOpen} />
             ) : (
               <IrRightPanel
                 libraryRootId={activeRootId}
@@ -2391,7 +2776,13 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             },
             {
               label: `Edit Metadata…${suffix}`,
-              onClick: () => (menuRows.length > 1 ? setBatchEditRows(menuRows) : setEditMetadataRow(contextMenu.row))
+              onClick: () => {
+                if (menuRows.length > 1) {
+                  if (!panelOpen) setPanelOpen(true)
+                } else {
+                  setEditMetadataRow(contextMenu.row)
+                }
+              }
             },
             {
               label: `Move to Trash…${suffix}`,

@@ -90,9 +90,18 @@ export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
     `INSERT INTO ir_item_field_source (item_id, field, source) VALUES (?, ?, ?)
      ON CONFLICT(item_id, field) DO UPDATE SET source = excluded.source`
   )
+  // `notes` is the one field this writer handles that lives on `item`, not `ir_item` — it's the
+  // same free-text notes column NAM mode's own file notes concept mirrors, and
+  // labProjectEnrichment.ts already writes it there from session.json's metadata.notes. Every
+  // other field name passed in here is a real `ir_item` column; provenance tracking
+  // (ir_item_field_source) still works identically for 'notes' even though its value lives
+  // elsewhere — the table only ever stores a field NAME + source, never the value itself.
+  const targetTable = (field: string): 'item' | 'ir_item' => (field === 'notes' ? 'item' : 'ir_item')
+  const targetIdColumn = (field: string): string => (field === 'notes' ? 'id' : 'item_id')
+
   return {
     clear(itemId, field) {
-      db.prepare(`UPDATE ir_item SET ${field} = NULL WHERE item_id = ?`).run(itemId)
+      db.prepare(`UPDATE ${targetTable(field)} SET ${field} = NULL WHERE ${targetIdColumn(field)} = ?`).run(itemId)
       db.prepare(`DELETE FROM ir_item_field_source WHERE item_id = ? AND field = ?`).run(itemId, field)
     },
     write(itemId, field, value, source) {
@@ -109,7 +118,7 @@ export function createIrFieldWriter(db: DatabaseSync): IrFieldWriter {
           return false
         }
       }
-      db.prepare(`UPDATE ir_item SET ${field} = ? WHERE item_id = ?`).run(value, itemId)
+      db.prepare(`UPDATE ${targetTable(field)} SET ${field} = ? WHERE ${targetIdColumn(field)} = ?`).run(value, itemId)
       upsertSource.run(itemId, field, source)
       return true
     }

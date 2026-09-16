@@ -168,6 +168,111 @@ export async function renameItem(db: DatabaseSync, itemId: string, newBaseName: 
   return { itemId, success: true, newAbsPath }
 }
 
+/** Renames many items as one atomic unit — the batch-rename-with-a-template feature (parity
+ * backlog item 6) originally shipped as a loop of independent `renameItem` calls: each one safe on
+ * its own, but not atomic as a GROUP. A failure partway through left earlier renames applied and
+ * later ones not, reported only as a succeeded/failed count.
+ *
+ * This does every item's disk rename first, tracking what actually succeeded so a later failure
+ * can roll all of them back, then commits every catalog update in ONE DB transaction (same
+ * BEGIN/COMMIT/ROLLBACK idiom `contentHash.ts` and `importLibrary.ts` already use) — so the batch
+ * either fully lands, on both disk and catalog, or fully reverts to exactly where it started.
+ * Precondition failures (item not found, missing, blank name) abort the WHOLE batch before any
+ * disk mutation happens at all, rather than renaming some files and then discovering a later one
+ * in the list was invalid.
+ */
+export async function renameItemsBatch(
+  db: DatabaseSync,
+  renames: Array<{ itemId: string; newBaseName: string }>,
+  force = false
+): Promise<FileOpResult[]> {
+  interface Planned {
+    itemId: string
+    folderId: number | null
+    oldAbsPath: string
+    newAbsPath: string
+    newFileName: string
+  }
+  const planned: Planned[] = []
+
+  // Preflight: resolve every item and compute its destination path before touching disk. Any
+  // failure here aborts the batch entirely — nothing has moved yet, so "abort" is free.
+  for (const { itemId, newBaseName } of renames) {
+    const item = resolveItem(db, itemId)
+    const guard = guardOperable(item, itemId)
+    if (guard) return renames.map((r) => (r.itemId === itemId ? guard : { itemId: r.itemId, success: false, error: `Batch aborted — item ${itemId} failed: ${guard.error}` }))
+    const resolved = item as ResolvedItem
+    const oldAbsPath = absPathOf(resolved)
+    const ext = extname(oldAbsPath)
+    const trimmed = newBaseName.trim()
+    if (!trimmed) {
+      const err = { itemId, success: false, error: 'New name cannot be empty.' }
+      return renames.map((r) => (r.itemId === itemId ? err : { itemId: r.itemId, success: false, error: 'Batch aborted — another item in this batch had an empty name.' }))
+    }
+    const newFileName = trimmed + ext
+    const newAbsPath = join(dirname(oldAbsPath), newFileName)
+    planned.push({ itemId, folderId: resolved.folderId, oldAbsPath, newAbsPath, newFileName })
+  }
+
+  // Disk phase: rename each in order, remembering what succeeded so a failure partway can be
+  // rolled back to leave the filesystem exactly as it was before the batch started.
+  const renamedOnDisk: Planned[] = []
+  for (const p of planned) {
+    if (p.newAbsPath === p.oldAbsPath) {
+      renamedOnDisk.push(p)
+      continue
+    }
+    try {
+      if (fs.existsSync(p.newAbsPath)) {
+        if (!force) throw new Error('A file with that name already exists.')
+        fs.unlinkSync(p.newAbsPath)
+      }
+      fs.renameSync(p.oldAbsPath, p.newAbsPath)
+      renamedOnDisk.push(p)
+    } catch (err) {
+      for (const done of renamedOnDisk) {
+        if (done.newAbsPath === done.oldAbsPath) continue
+        try {
+          fs.renameSync(done.newAbsPath, done.oldAbsPath)
+        } catch {
+          // Best-effort — surfaced generically below; nothing more to do per-file here.
+        }
+      }
+      const failedId = p.itemId
+      return planned.map((x) =>
+        x.itemId === failedId
+          ? { itemId: x.itemId, success: false, error: String(err) }
+          : { itemId: x.itemId, success: false, error: `Batch rolled back — item ${failedId} failed: ${String(err)}` }
+      )
+    }
+  }
+
+  // Catalog phase: one transaction for every item's row update. If it throws, roll back both the
+  // DB transaction AND every disk rename this batch just performed.
+  db.exec('BEGIN')
+  try {
+    for (const p of renamedOnDisk) {
+      const folderRel = folderRelativePath(db, p.folderId)
+      const newRelativePath = toPosixRel(folderRel ? `${folderRel}/${p.newFileName}` : p.newFileName)
+      updateItemPath(db, p.itemId, p.folderId, newRelativePath, p.newFileName)
+    }
+    db.exec('COMMIT')
+  } catch (err) {
+    db.exec('ROLLBACK')
+    for (const p of renamedOnDisk) {
+      if (p.newAbsPath === p.oldAbsPath) continue
+      try {
+        fs.renameSync(p.newAbsPath, p.oldAbsPath)
+      } catch {
+        // Best-effort — surfaced generically below.
+      }
+    }
+    return planned.map((x) => ({ itemId: x.itemId, success: false, error: `Batch rolled back — catalog update failed: ${String(err)}` }))
+  }
+
+  return planned.map((p) => ({ itemId: p.itemId, success: true, newAbsPath: p.newAbsPath }))
+}
+
 // ---- move ---------------------------------------------------------------------------------------
 
 /** Moves items to a destination folder within the SAME library root — cross-root moves aren't

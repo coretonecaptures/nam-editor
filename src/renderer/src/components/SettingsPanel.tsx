@@ -1048,6 +1048,44 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
             </div>
 
             <div className="flex items-center gap-2 mb-4 mt-8">
+              <span className="text-sm">IR</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">IR Catalog Metadata</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/30 p-3 space-y-3">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draft.irAllowEmbedMetadataInFile ?? false}
+                  onChange={(e) => {
+                    const updated = { ...draft, irAllowEmbedMetadataInFile: e.target.checked }
+                    setDraft(updated)
+                    onSave(updated)
+                  }}
+                  className="mt-0.5 flex-shrink-0"
+                />
+                <span className="text-xs text-gray-600 dark:text-gray-400">
+                  Allow embedding metadata into the WAV file itself (&ldquo;Embed in File&rdquo; in the
+                  IR item detail panel)
+                </span>
+              </label>
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed flex items-start gap-1.5">
+                <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                <span>
+                  Off by default. This writes a standard broadcast-WAV (<span className="font-mono">bext</span>)
+                  chunk into the file — it never touches the audio samples themselves, and every mainstream DAW
+                  and audio tool ignores a chunk it doesn&apos;t recognize. That said, we haven&apos;t verified
+                  this against every hardware sampler, pedal, or embedded player some users load IRs into — a
+                  handful of rigid parsers in the wild are known to choke on unexpected chunks in a WAV file.
+                  Leave this off unless you specifically need metadata that travels with the file outside this
+                  app&apos;s own catalog (e.g. handing an IR to someone else, or to hardware).
+                </span>
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 mb-4 mt-8">
               <span className="text-sm">DLY</span>
               <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Convolution Delays</h3>
               <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
