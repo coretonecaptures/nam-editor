@@ -337,7 +337,7 @@ measures from the WAV itself (is_reverb/is_stereo/is_true_stereo) stay read-only
 NAM mode gives its own auto-set fields.
 
 **New: reverb CaptureMetadata fields (2026-09-12 on IR Lab's side, confirmed against
-`src/core/Domain.h` in `C:\Users\Admin\ir-lab`).** 9 new `ir_item` columns
+`src/core/Domain.h` in IR Lab's own private source repo).** 9 new `ir_item` columns
 (`reverb_unit_make/unit_model/preset_name/space_type/recommended_wet_percent/
 recommended_pre_delay_ms/capture_mode/source_signal_type/decay_seconds`), written by
 `labProjectEnrichment.ts` from session.json's `metadata.reverb*` keys. The four operator-entered

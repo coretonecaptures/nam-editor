@@ -12,7 +12,7 @@ import { formatSampleRate } from '../../../../shared/wavFormat'
  * not modal). This panel is the fix for both at once.
  *
  * Field coverage mirrors `itemDetail.ts`'s `ItemDetail` shape 1:1 — every column confirmed against
- * IR Lab's own `src/core/Domain.h` (in `C:\Users\Admin\ir-lab`), not guessed. Fields IR Lab only
+ * IR Lab's own `src/core/Domain.h` (its private, separate source repo), not guessed. Fields IR Lab only
  * ever records automatically (capture_type, preset_kind, reverb_capture_mode,
  * reverb_source_signal_type) or measures from the WAV itself (is_reverb/is_stereo/is_true_stereo)
  * are shown read-only, matching how MetadataEditor treats NAM's own auto-set fields (loudness/

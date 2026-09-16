@@ -8,7 +8,7 @@
  * see SettingsPanel.tsx's own warning copy).
  *
  * Format matches ir-lab's `WavIO.cpp::buildBwavMetadata` exactly (confirmed against that source in
- * C:\Users\Admin\ir-lab, not guessed) — "Key: value | Key: value | ..." in Description, Originator
+ * IR Lab's own private source repo, not guessed) — "Key: value | Key: value | ..." in Description, Originator
  * fixed to "IR Lab" — so a file embedded here round-trips through IR Lab's own parser and vice
  * versa, rather than drifting into a second dialect of the same chunk.
  *

@@ -3,7 +3,7 @@
  * slot as Phase 3's applyVendorParsers, run after importLibrary/finalizeIndexes/applyVendorParsers
  * in the scan IPC handler. Reads the real on-disk layout IR Lab itself writes (confirmed against
  * the actual source this session — SessionStore.h/.cpp, ProjectStore.h/.cpp, Project.h in
- * C:\Users\Admin\ir-lab — not guessed):
+ * IR Lab's own (private, separate) source repo — not guessed):
  *
  *   <projectFolder>/<deliverable>.wav              -- flat, already a normal `item` row
  *   <projectFolder>/.SessionData/project.json       -- captureIndex: [{ captureId, outputFileName }]

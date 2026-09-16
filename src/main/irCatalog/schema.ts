@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS ir_item (
   mic_b_signal_chain_override TEXT,
   mic_b_notes                 TEXT,
   -- Reverb-specific (IR Lab's 2026-09-12 CaptureMetadata additions, confirmed against
-  -- src/core/Domain.h in C:\Users\Admin\ir-lab — not guessed). Meaningful only for a capture whose
+  -- src/core/Domain.h in IR Lab's own private source repo — not guessed). Meaningful only for a capture whose
   -- preset expected a decay tail; blank/-1/0 for every ordinary cab capture, same "additive, never
   -- required" convention as the mic-A/B block above. unitMake/unitModel/presetName/spaceType and
   -- the two recommended-* numbers are operator-entered in IR Lab's own data model but IR Lab has
