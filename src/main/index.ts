@@ -6205,6 +6205,45 @@ app.whenReady().then(async () => {
   // blocking legitimately-loaded sub-resources (local-file:// images, Tone3000 assets).
   // The offline-render player replacing it does not use SharedArrayBuffer at all.
 
+  // Content-Security-Policy (security-review-2026-08-31.md S1, priority 1). Skipped in dev: the
+  // Vite dev server injects its own HMR client script/websocket, and this app has no injection
+  // sink today (no dangerouslySetInnerHTML/markdown-to-HTML/innerHTML anywhere — grep-verified,
+  // re-checked when this was added) — dev is a trusted local loop, the same reasoning already
+  // used for the safeStorage dev bypass above. Filtered to `mainFrame` only, learning from the
+  // COOP/COEP removal just above this: a header applied broadly across every response risks
+  // breaking sub-resource loads (local-file:// images, worklet scripts) that this app depends on
+  // in ways that aren't obvious until something silently stops rendering.
+  //
+  // 'unsafe-inline' on style-src is required, not a shortcut — this app sets inline `style={{...}}`
+  // throughout the React tree (DataGrid column widths, dynamic knob positions, etc.); rewriting
+  // all of that into static classes isn't in scope here, and the actual threat this CSP defends
+  // against (remote script/beacon injection, arbitrary local file exfiltration via a compromised
+  // <img>/fetch target) is about script-src/connect-src/img-src, not inline CSS.
+  if (!isDev) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      if (details.resourceType !== 'mainFrame') {
+        callback({ cancel: false, responseHeaders: details.responseHeaders })
+        return
+      }
+      const csp = [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' local-file: blob: data:",
+        "media-src 'self' local-file: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-src 'none'"
+      ].join('; ')
+      callback({
+        cancel: false,
+        responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [csp] }
+      })
+    })
+  }
+
   // Audio input permission for the live player.
   //
   // Electron denies getUserMedia by default with no prompt and no useful error, so without this

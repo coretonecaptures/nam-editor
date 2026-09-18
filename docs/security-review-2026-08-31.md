@@ -23,8 +23,27 @@ call site is a plain `<img src>` as this doc already notes, but the images come 
 different trees -- catalog library roots AND the trainer's own separately-configured graph output
 (`job.graphRoot`/`finalModelRoot/_graphs`, unrelated to any library root) -- so a roots-only
 allowlist built from just the catalog would have silently broken trained-model graph previews.
-File-type restriction achieves the same disclosure-risk reduction without that gap. **Items 1 (CSP
-header) and 3 (`sandbox: true`) are still not done.**
+File-type restriction achieves the same disclosure-risk reduction without that gap.
+
+**Status 2026-09-18: item 1 (CSP header) is done.** `index.ts`'s `app.whenReady()` now installs a
+`Content-Security-Policy` via `session.defaultSession.webRequest.onHeadersReceived`, filtered to
+`resourceType === 'mainFrame'` only (learning from the COOP/COEP removal noted above — a header
+applied broadly across every response risks breaking sub-resource loads in ways that aren't obvious
+until something silently stops rendering). Skipped in dev (Vite's own dev server/HMR client,
+plus dev is a trusted local loop). Policy: `default-src 'self'; script-src 'self'; style-src 'self'
+'unsafe-inline'; img-src 'self' local-file: blob: data:; media-src 'self' local-file: blob:;
+font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'none'`.
+`style-src` needed `'unsafe-inline'` — this app sets inline `style={{...}}` throughout the React
+tree; the actual threat this defends against (remote script/beacon injection, arbitrary local file
+exfiltration) is about script-src/connect-src/img-src, not inline CSS. Verified against a real
+production build (`isDev: false`) via the Chrome DevTools Protocol: the header is present on the
+document response exactly as configured, the app renders fully (3981 images loaded, root mounted,
+`readyState: complete`), and no CSP violations appeared in the console log on either initial load
+or a reload. **Item 3 (`sandbox: true`) is still not done** — real blocker found while scoping it:
+`preload/index.ts` `require`s `fs` and `path` directly rather than routing every file operation
+through IPC to main, which a sandboxed preload's restricted `require` doesn't allow. Flipping
+`sandbox: true` needs that preload rework done first, not just the flag — a materially larger,
+separate piece of work from the CSP header.
 
 **What.** `src/renderer/index.html` sets **no** Content-Security-Policy (no
 `<meta http-equiv>`), and `src/main/*.ts` installs **no** `onHeadersReceived`
