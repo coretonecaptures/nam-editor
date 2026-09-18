@@ -5224,7 +5224,7 @@ function createWindow(): void {
       : { titleBarStyle: 'hiddenInset' }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     },
@@ -6326,6 +6326,20 @@ app.whenReady().then(async () => {
   // IPC: Expose userData path synchronously (used by preload to read settings.json)
   ipcMain.on('app:getUserDataPath', (event) => {
     event.returnValue = app.getPath('userData')
+  })
+
+  // IPC: Read + parse settings.json synchronously (sandbox: true preload replacement for its own
+  // direct fs.readFileSync — a sandboxed preload's require() polyfill only resolves electron/
+  // events/timers/url, no fs/path, so this file read has to happen here instead. Returns null
+  // (not a thrown error) when the file doesn't exist yet, matching preload's own previous
+  // try/catch-and-ignore behavior exactly — the renderer already handles null by falling back to
+  // migrating settings from localStorage.
+  ipcMain.on('app:getInitialSettingsSync', (event) => {
+    try {
+      event.returnValue = JSON.parse(fs.readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf-8'))
+    } catch {
+      event.returnValue = null
+    }
   })
 
   // IPC: Persist settings to userData/settings.json (fire-and-forget from renderer)

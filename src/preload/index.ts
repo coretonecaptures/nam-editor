@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import fs from 'fs'
-import path from 'path'
 import type { TrainerStartPayload, TrainerStateSnapshot, TrainerHistoryEntry, WatcherFileEntry } from '../shared/trainer'
 import type {
   NamProjectSummary,
@@ -23,14 +21,13 @@ interface ProjectDetailMicShape {
   notes: string | null
 }
 
-// Read settings.json from userData synchronously so the renderer has settings
-// available immediately — no async flash, no re-render on load.
-let initialSettings: unknown = null
-try {
-  const userData = ipcRenderer.sendSync('app:getUserDataPath') as string
-  const settingsPath = path.join(userData, 'settings.json')
-  initialSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
-} catch { /* file doesn't exist yet — renderer will migrate from localStorage */ }
+// Read settings.json synchronously so the renderer has settings available immediately — no async
+// flash, no re-render on load. Delegated to main via sync IPC rather than fs.readFileSync directly
+// here: a sandboxed preload's require() polyfill (sandbox: true, webPreferences below) only
+// resolves electron/events/timers/url — no fs, no path — so the actual file read has to happen in
+// the (unsandboxed) main process. main returns null, not a thrown error, when the file doesn't
+// exist yet — renderer will migrate from localStorage in that case, same as the old catch block.
+const initialSettings: unknown = ipcRenderer.sendSync('app:getInitialSettingsSync')
 
 const api = {
   openFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:openFiles'),

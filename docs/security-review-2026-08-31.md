@@ -39,11 +39,20 @@ exfiltration) is about script-src/connect-src/img-src, not inline CSS. Verified 
 production build (`isDev: false`) via the Chrome DevTools Protocol: the header is present on the
 document response exactly as configured, the app renders fully (3981 images loaded, root mounted,
 `readyState: complete`), and no CSP violations appeared in the console log on either initial load
-or a reload. **Item 3 (`sandbox: true`) is still not done** — real blocker found while scoping it:
-`preload/index.ts` `require`s `fs` and `path` directly rather than routing every file operation
-through IPC to main, which a sandboxed preload's restricted `require` doesn't allow. Flipping
-`sandbox: true` needs that preload rework done first, not just the flag — a materially larger,
-separate piece of work from the CSP header.
+or a reload.
+
+**Status 2026-09-18: item 3 (`sandbox: true`) is done too.** The earlier "materially larger,
+separate piece of work" note above was overstated — checked again and `preload/index.ts` had
+exactly ONE real `fs`/`path` use, not file operations scattered throughout: a synchronous
+`fs.readFileSync` of `settings.json` at preload load time, so `window.api.initialSettings` is
+populated before the renderer's first paint. Moved that read into main behind a new synchronous
+channel (`app:getInitialSettingsSync`, same pattern as the existing `app:getUserDataPath`) —
+preload now just calls `ipcRenderer.sendSync('app:getInitialSettingsSync')`, no `fs`/`path` import
+left at all. `sandbox: true` set on the (single) `BrowserWindow`'s `webPreferences`. Verified
+against a real production build via the Chrome DevTools Protocol, not just a typecheck: `window.api`
+exposes correctly, `initialSettings` loads with its real 93 keys (not null), and a live async IPC
+call (`irLibraryListRoots()`) round-trips correctly — confirming both the sync settings path and
+the ordinary `contextBridge`/`ipcRenderer.invoke` surface work unchanged under the sandbox.
 
 **What.** `src/renderer/index.html` sets **no** Content-Security-Policy (no
 `<meta http-equiv>`), and `src/main/*.ts` installs **no** `onHeadersReceived`
