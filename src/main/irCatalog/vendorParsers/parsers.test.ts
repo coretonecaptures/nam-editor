@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ownhammerParser } from './ownhammer'
 import { redwirezParser } from './redwirez'
+import { yorkParser } from './york'
 import { genericVocabularyParser } from './genericVocabulary'
 
 describe('ownhammerParser', () => {
@@ -59,6 +60,87 @@ describe('redwirezParser', () => {
     expect(fields.microphone).toBe('D112')
     expect(fields.position).toBe('Cap-0in')
     expect(fields.manufacturer).toBe('Ampeg')
+  })
+})
+
+describe('yorkParser', () => {
+  // Real filenames from F:\Impulse Responses\York Audio\York Audio - 5153 412 VH20\...
+  const siblings = [
+    'YA 5153 412 VH20 121-1.wav',
+    'YA 5153 412 VH20 421m-OA 2.wav',
+    'YA 5153 412 VH20 57m-1 .wav',
+    'YA 5153 412 VH20 Mix 01.wav'
+  ]
+
+  it('recognizes a folder containing YA-prefixed files', () => {
+    expect(yorkParser.recognizes('York Audio - 5153 412 VH20/44.1k/Mics', siblings)).toBe(true)
+  })
+
+  it('does not recognize an unrelated folder', () => {
+    expect(yorkParser.recognizes('RedWirez/SVT810/AKG D112', ['SVT810-D112-Cap-0in.wav'])).toBe(false)
+  })
+
+  it('translates a well-known bare mic code and stores position raw', () => {
+    const fields = yorkParser.parse('York Audio - 5153 412 VH20/44.1k/YA 5153 412 VH20 121-1.wav', '')
+    expect(fields).toEqual({ cabinet: '5153 412 VH20', microphone: 'Royer R-121', position: '1' })
+  })
+
+  it('strips an unconfirmed variant letter off the mic code before lookup, appends a trailing take number to position', () => {
+    const fields = yorkParser.parse('YA 5153 412 VH20 421m-OA 2.wav', '')
+    expect(fields.microphone).toBe('Sennheiser MD421')
+    expect(fields.position).toBe('OA 2')
+  })
+
+  it('handles a real stray-trailing-space filename without corrupting the result', () => {
+    const fields = yorkParser.parse('YA 5153 412 VH20 57m-1 .wav', '')
+    expect(fields.microphone).toBe('Shure SM57')
+    expect(fields.position).toBe('1')
+    expect(fields.cabinet).toBe('5153 412 VH20')
+  })
+
+  it('does not guess a microphone for a Mix/blend filename', () => {
+    const fields = yorkParser.parse('YA 5153 412 VH20 Mix 01.wav', '')
+    expect(fields.microphone).toBeUndefined()
+    expect(fields.cabinet).toBe('5153 412 VH20')
+  })
+
+  // Real files pulled from a random sample across the whole library, not just one pack folder —
+  // these caught the letter-prefixed mic codes (U47, SM7) the first pass of this regex missed
+  // entirely (it only matched a leading digit).
+  it('translates letter-prefixed mic codes (U47, SM7) the same as bare-numeric ones', () => {
+    expect(yorkParser.parse('YA BMAN 410 P10Q U47-3.wav', '').microphone).toBe('Neumann U47')
+    expect(yorkParser.parse('YA VH+ 412 P50E SM7-CNT.wav', '').microphone).toBe('Shure SM7')
+  })
+
+  it('appends a trailing take/variant token onto position for real multi-token tails', () => {
+    const fields = yorkParser.parse('YA BMAN 410 P10Q SM7-CE 2.wav', '')
+    expect(fields.microphone).toBe('Shure SM7')
+    expect(fields.position).toBe('CE 2')
+  })
+
+  it('folds an unrecognized mic-shaped token with no hyphen into the raw cabinet string rather than guessing', () => {
+    // Real file: "YA ZILA 212 H75 421-5.wav" — H75 looks mic-related (it even lives in an "H75
+    // Singles" folder) but never gets a hyphenated position of its own here, so there's nothing to
+    // safely parse it as. Falls into the opaque cabinet string instead of being dropped or guessed.
+    const fields = yorkParser.parse('YA ZILA 212 H75 421-5.wav', '')
+    expect(fields.cabinet).toBe('ZILA 212 H75')
+    expect(fields.microphone).toBe('Sennheiser MD421')
+    expect(fields.position).toBe('5')
+  })
+
+  it('leaves an unlisted numeric mic code as the raw code rather than guessing', () => {
+    const fields = yorkParser.parse('YA MES 212 V30 999-CNT.wav', '')
+    expect(fields.microphone).toBe('999')
+  })
+
+  it('splits off a Celestion-Vintage-style speaker code (V30) but not a lookalike (VH20)', () => {
+    expect(yorkParser.parse('YA MES 212 V30 57-1.wav', '')).toEqual({
+      cabinet: 'MES 212',
+      speaker: 'V30',
+      microphone: 'Shure SM57',
+      position: '1'
+    })
+    expect(yorkParser.parse('YA 5153 412 VH20 57-1.wav', '').speaker).toBeUndefined()
   })
 })
 

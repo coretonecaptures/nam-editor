@@ -12,10 +12,11 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { VendorParser, ParsedIrFields } from './types'
 import { ownhammerParser } from './ownhammer'
 import { redwirezParser } from './redwirez'
+import { yorkParser } from './york'
 import { genericVocabularyParser } from './genericVocabulary'
 import { createIrFieldWriter } from '../fieldConfidence'
 
-const STRUCTURAL_PARSERS: VendorParser[] = [ownhammerParser, redwirezParser]
+const STRUCTURAL_PARSERS: VendorParser[] = [ownhammerParser, redwirezParser, yorkParser]
 
 export interface VendorParseStats {
   itemsProcessed: number

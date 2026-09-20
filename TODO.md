@@ -1,5 +1,27 @@
 # TODO
 
+## IR vendor coverage — hand-built structural parsers vs. a real user-facing rule builder
+
+2026-09-20: added `york.ts`, the third structural vendor parser (alongside `ownhammer.ts`/
+`redwirez.ts`), built and validated against the user's real library
+(`F:\Impulse Responses\York Audio`, 16,875 files, zero crashes, 88% mic coverage). Same "structural
+parser for the filename shape, confidence-ladder writer, never guess an ambiguous field" pattern as
+the existing two.
+
+**Not a sustainable long-term path for every big vendor.** Each one needs its own hand-built parser
+file, its own real-library validation pass, and its own judgment calls about which mic/cab codes are
+confident enough to translate — that's real per-vendor engineering time, not something that scales
+to "the next 10 vendors we hit." The existing **Suggestion Rules** feature (parity backlog item 20 —
+`IrMetadataSuggestRulesModal.tsx`, per-folder/filename token rules, no code) is the RIGHT tool for a
+user's own smaller/one-off packs, but it's flat rule-by-rule, not code-table-driven the way a real
+vendor parser is (no single place to say "these 40 numeric codes all mean specific mic models").
+
+When we hit the next big vendor, decide per-vendor whether it's worth a hand-built parser (like
+York) or whether Suggestion Rules already covers it well enough — and if hand-built parsers keep
+being the answer, consider a genuinely generalized "vendor code-table" system (upload/paste a
+manufacturer's own code table — mic codes, position codes — once, get a parser without writing one)
+instead of one bespoke TypeScript file per vendor forever.
+
 ## Future project: real VST3 plugin (presets + all FX)
 
 Feasibility assessment only, not started: `docs/vst3-plugin-assessment.md`. Verdict: a multi-month
