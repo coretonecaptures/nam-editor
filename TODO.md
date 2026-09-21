@@ -20,7 +20,80 @@ When we hit the next big vendor, decide per-vendor whether it's worth a hand-bui
 York) or whether Suggestion Rules already covers it well enough — and if hand-built parsers keep
 being the answer, consider a genuinely generalized "vendor code-table" system (upload/paste a
 manufacturer's own code table — mic codes, position codes — once, get a parser without writing one)
-instead of one bespoke TypeScript file per vendor forever.
+instead of one bespoke TypeScript file per vendor forever. Plan for that: `docs/ir-diy-custom-
+parser-plan-2026-09-21.md`.
+
+### Next three vendors queued (2026-09-21) — real filenames sampled, not yet built
+
+Three more real libraries on this machine, checked for naming shape so whoever builds these
+doesn't have to rediscover it. Ordered roughly easiest-to-hardest.
+
+**ML Sound Lab** (`F:\Impulse Responses\ML Soundlab`) — cleanest of the three, closest to
+`york.ts`'s own shape:
+```
+ML-FRMN-M25-121-A.wav              -- ML-{cab code}-{speaker code}-{mic code}-{position letter}
+ML-MARS-HAIR-METAL-160-B.wav       -- multi-token cab code, no speaker-code token (pack-dependent —
+                                       same "variable cab-token count" issue york.ts already handles)
+ML-MARS-HAIR-METAL-160-B-MPT.wav   -- trailing "-MPT" suffix (minimum-phase-transform variant, a
+                                       processing flag, not a new field — same token, strip and ignore)
+ML-FRMN-FREEDOM.wav                -- a named blend/preset (no mic/position token at all) — leave
+                                       mic/position unset, same "don't guess a blend" rule
+ML-MARS-HAIR-METAL-MIX-PANTHER.wav -- another blend shape, "MIX-{name}" mid-string this time
+```
+Straightforward hyphen-delimited structural parser, same idiom as `york.ts`. Mic codes overlap
+heavily with York's own table (121, 160, 421, 57, 906, 184) — the `MIC_CODES` table in `york.ts`
+is directly reusable, not a fresh lookup (worth factoring the shared codes into a common module
+once a second parser needs the same table, rather than copy-pasting it).
+
+**Tone Factor** (`F:\Impulse Responses\Tone Factor`) — meaningfully harder, real blends are a
+named token pair plus a mix ratio, not a single code:
+```
+TF 62 BMAN 2X12 CREAM 65 421 U5 017 TUBE 30-70.wav   -- TWO mic codes (421, U5) + a "017 TUBE" mic
+                                                          descriptor + a blend ratio "30-70"
+TF 62 BMAN 2X12 CREAM 65 017 TUBE 1.wav              -- single mic, numbered position (bare "1",
+                                                          not a lettered/coded position like York/ML)
+TF 62 BMAN 2X12 CREAM 65 U87 3 - Enhanced.wav        -- trailing "- Enhanced" / "- Top Boost" tags —
+                                                          processing/voicing variants, not a field
+```
+"017 TUBE" as a two-token mic descriptor (not a bare code) and the "- Enhanced"/"- Top Boost"
+suffix tags mean this needs its own token-boundary logic, not a direct reuse of `york.ts`'s
+regex shape. Blend files (two mic codes + a ratio like "30-70") should get the same "don't guess"
+treatment `ownhammer.ts`/`york.ts` already give blends — leave mic/position unset rather than
+picking one of the two mics arbitrarily.
+
+**Celestion** (`F:\Impulse Responses\Celestion`) — genuinely different shape from the other two,
+worth treating as its own design problem rather than forcing into the same template:
+```
+G12M Greenbk 412 C Hi-Gn 121+57 Celestion.wav              -- speaker name ALREADY SPELLED OUT
+                                                                (Greenbk = Greenback), not coded —
+                                                                manufacturer=Celestion is knowable
+                                                                with real confidence here, unlike
+                                                                York/ML/Tone Factor's cab codes
+Cel Blue 212 O R-121 Dark2 Celestion.wav                    -- mic name spelled out too (R-121),
+                                                                but the trailing word ("Dark2",
+                                                                "Balanced", "Bright", "Fat") is an
+                                                                EQ-VOICING variant of that mic
+                                                                position, not a physical position —
+                                                                storing it as `position` would be
+                                                                misleading; unclear what field (if
+                                                                any) it honestly belongs in
+G12M Greenbk 412 C Hi-Gn All+Room Stereo Celestion.wav      -- "All"/"All+Room Mono/Stereo" blend-
+                                                                of-everything files, a third blend
+                                                                shape distinct from York/ML/Tone
+                                                                Factor's
+Neumann TLM 107 Room/G12M Greenbk 412 C TLM 107 Room L.wav  -- mic name lives in the FOLDER, not
+                                                                just the filename — needs the
+                                                                ancestor-folder lookup redwirez.ts's
+                                                                `matchManufacturer` helper already
+                                                                does, not a filename-only parser
+```
+Because manufacturer AND speaker are already real English words here (not vendor codes), this is
+actually the best-suited of the three for `genericVocabularyParser`'s existing whole-word matching
+— worth checking real coverage from the generic fallback ALONE (zero new code) before deciding a
+structural parser is even needed, the same "is a real gap actually there" check this repo's own
+vendor-parser build plan already asks for before writing one. The genuinely open design question
+is what to do with the EQ-voicing trailing word ("Dark2"/"Bright"/"Balanced") — decide that before
+writing any parser code, not while writing it.
 
 ## Future project: real VST3 plugin (presets + all FX)
 
