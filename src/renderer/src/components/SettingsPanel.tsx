@@ -800,6 +800,34 @@ export function SettingsPanel({ settings, onSave, onClose, initialTab, onOpenTra
           </div>
           )}
 
+          {/* Workspace Modes */}
+          {settingsTab === 'global' && (
+          <div>
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-sm">Modes</span>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Workspace Modes</h3>
+              <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
+            </div>
+            <div className="space-y-4">
+              <CheckboxField
+                label="Show IR mode"
+                description="Hides the IR icon from the mode rail and its Ctrl/Cmd+2 shortcut — your IR library roots and catalog are kept and reappear exactly as they were if you turn this back on."
+                checked={draft.enableIrMode}
+                onChange={(v) => update('enableIrMode', v)}
+              />
+              <CheckboxField
+                label="Show NAM Projects mode"
+                description="Hides the NAM Projects icon from the mode rail and its Ctrl/Cmd+3 shortcut — your project folders and settings are kept and reappear exactly as they were if you turn this back on."
+                checked={draft.enableNamProjectsMode}
+                onChange={(v) => update('enableNamProjectsMode', v)}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-500">
+                Takes effect the next time you switch modes or restart the app.
+              </p>
+            </div>
+          </div>
+          )}
+
           {/* Library */}
           {settingsTab === 'global' && (
           <div>

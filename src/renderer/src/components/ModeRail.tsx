@@ -54,17 +54,22 @@ const MODES: Array<{ mode: AppMode; label: string; hint: string; icon: React.Rea
 
 export function ModeRail({
   mode,
-  onChange
+  onChange,
+  hiddenModes
 }: {
   mode: AppMode
   onChange: (mode: AppMode) => void
+  /** Modes to omit from the rail entirely (Settings → Workspace Modes) — a render-time filter
+   * only; `MODES` itself (icons/labels/shortcuts hints) stays the single source of truth. */
+  hiddenModes?: ReadonlySet<AppMode>
 }): React.ReactElement {
+  const visibleModes = hiddenModes ? MODES.filter((m) => !hiddenModes.has(m.mode)) : MODES
   return (
     <nav
       aria-label="Workspace"
       className="flex-shrink-0 w-11 h-full flex flex-col items-center gap-1 pt-2 bg-panel-2 border-r border-nm-border select-none"
     >
-      {MODES.map(({ mode: m, label, hint, icon }) => {
+      {visibleModes.map(({ mode: m, label, hint, icon }) => {
         const active = mode === m
         return (
           <button

@@ -494,6 +494,12 @@ export interface AppSettings {
   // Mobile companion app bridge
   enableCompanionApp: boolean
 
+  // Workspace mode visibility — hides a mode from ModeRail/the Ctrl/Cmd+2/3 shortcuts without
+  // touching anything that mode already owns (library roots, the IR catalog, NAM Projects
+  // folders, etc.). NAM mode itself has no toggle — it's the app's permanent default workspace.
+  enableIrMode: boolean
+  enableNamProjectsMode: boolean
+
   // Optional Tone3000 username for creator matching / search helpers
   tone3000Username: string
 
@@ -613,6 +619,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultFolderTab: 'overview',
   showDashboardOnLaunch: true,
   enableCompanionApp: false,
+  enableIrMode: true,
+  enableNamProjectsMode: true,
   tone3000Username: '',
   metadataSuggestRules: [],
   metadataSuggestScopedRules: [],

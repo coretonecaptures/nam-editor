@@ -7,10 +7,27 @@ import { onGoToTrainingBatches, onGoToNamProject, goToNamProject } from './appNa
 
 const MODE_KEY = 'nam-lab-app-mode'
 
-function readMode(): AppMode {
+// Read once at module load, same "settings.json is loaded synchronously in preload, before any
+// shell's own live appSettings state exists yet" pattern IrModeShell.tsx already establishes for
+// exactly this kind of pre-mount decision. Deliberately session-scoped, not live-reactive: a
+// change made via Settings → Workspace Modes takes effect the next time the app launches or a
+// mode is switched into, not mid-session in whichever shell the user happens to be sitting in —
+// see the plan doc's own "known, deliberate limitation" note for why that tradeoff was made
+// rather than threading a live-update callback through all three shells' separate SettingsPanel
+// instances for a setting this infrequently changed.
+function readEnabledModes(): { ir: boolean; namProjects: boolean } {
+  const settings = (window.api.initialSettings ?? {}) as { enableIrMode?: boolean; enableNamProjectsMode?: boolean }
+  return {
+    ir: settings.enableIrMode !== false,
+    namProjects: settings.enableNamProjectsMode !== false
+  }
+}
+
+function readMode(enabled: { ir: boolean; namProjects: boolean }): AppMode {
   try {
     const stored = localStorage.getItem(MODE_KEY)
-    if (stored === 'ir' || stored === 'nam-projects') return stored
+    if (stored === 'ir' && enabled.ir) return stored
+    if (stored === 'nam-projects' && enabled.namProjects) return stored
     return 'nam'
   } catch {
     return 'nam'
@@ -26,7 +43,11 @@ function readMode(): AppMode {
  * Keyboard: Cmd/Ctrl+1/2/3 jump between modes.
  */
 export default function AppRoot(): React.ReactElement {
-  const [mode, setMode] = useState<AppMode>(readMode)
+  const [enabledModes] = useState(readEnabledModes)
+  const [mode, setMode] = useState<AppMode>(() => readMode(enabledModes))
+  const hiddenModes = new Set<AppMode>()
+  if (!enabledModes.ir) hiddenModes.add('ir')
+  if (!enabledModes.namProjects) hiddenModes.add('nam-projects')
 
   useEffect(() => {
     try {
@@ -43,8 +64,9 @@ export default function AppRoot(): React.ReactElement {
   // IR Lab's "Manage in NAM Lab..." button -> namlab://project?id=<x> -> main process resolves
   // it and either pushes namlab:openProject (already running) or we pull it once on mount
   // (cold launch, avoids the did-finish-load subscribe race). Either way it lands in appNav's
-  // pending-nav slot and flips this shell to NAM Projects mode.
-  useEffect(() => onGoToNamProject(() => setMode('nam-projects')), [])
+  // pending-nav slot and flips this shell to NAM Projects mode — unless the user has hidden that
+  // mode, in which case a deep link shouldn't silently re-open it behind their back.
+  useEffect(() => onGoToNamProject(() => { if (enabledModes.namProjects) setMode('nam-projects') }), [enabledModes.namProjects])
   useEffect(() => {
     const unsubscribe = window.api.onNamLabOpenProject((projectId) => goToNamProject(projectId))
     window.api.getPendingNamLabProject().then((projectId) => {
@@ -57,16 +79,16 @@ export default function AppRoot(): React.ReactElement {
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
       if (e.key === '1') setMode('nam')
-      else if (e.key === '2') setMode('ir')
-      else if (e.key === '3') setMode('nam-projects')
+      else if (e.key === '2' && enabledModes.ir) setMode('ir')
+      else if (e.key === '3' && enabledModes.namProjects) setMode('nam-projects')
       else return
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [enabledModes.ir, enabledModes.namProjects])
 
-  const rail = <ModeRail mode={mode} onChange={setMode} />
+  const rail = <ModeRail mode={mode} onChange={setMode} hiddenModes={hiddenModes} />
 
   if (mode === 'ir') return <IrModeShell leftRail={rail} />
   if (mode === 'nam-projects') return <NamProjectsShell leftRail={rail} />
