@@ -736,6 +736,21 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     }
   }, [])
 
+  // "Play in IR Lab" (ir-library-gpt-audit-2026-09-25's P0) — loads the selection straight into
+  // Live Audition's Cab A/B slots, distinct from Send-to-Blender. Reuses importResult, the same
+  // shared status line "Open in IR Lab" above already writes to, rather than a third message
+  // state for what's conceptually the same kind of "did the handoff work" feedback.
+  const [sendingPlayCab, setSendingPlayCab] = useState(false)
+  const sendPlayCabToIrLab = useCallback(async () => {
+    setSendingPlayCab(true)
+    try {
+      const result = await window.api.irLibrarySendPlayCabToIrLab([...selectedIds])
+      setImportResult(result.success ? 'Loaded in IR Lab.' : result.reason ?? 'Failed to load in IR Lab.')
+    } finally {
+      setSendingPlayCab(false)
+    }
+  }, [selectedIds])
+
   // The amp capture the IR is auditioned THROUGH. Picked once, remembered across restarts, and
   // loaded lazily — the player can't open without one, so the first play prompts for it.
   const applyAmpCapturePath = useCallback(async (path: string, remember: boolean): Promise<void> => {
@@ -1726,6 +1741,24 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
             A/B Audition
           </button>
         )}
+        {hasAnyRoot && (() => {
+          const countOk = selectedIds.size >= 1 && selectedIds.size <= 4
+          const availability = describeIrLabAvailability(
+            connectorAvailable,
+            irLabStatus,
+            'Load the selection into Live Audition’s Cab A/B slots'
+          )
+          return (
+            <button
+              onClick={() => void sendPlayCabToIrLab()}
+              disabled={!countOk || availability.disabled || sendingPlayCab}
+              className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
+              title={countOk ? availability.tooltip : 'Select 1-4 IRs (Ctrl/Cmd-click) — 1-2 fill Cab A/B, 3-4 also fill a stereo rig’s second lane'}
+            >
+              {sendingPlayCab ? 'Loading…' : 'Play in IR Lab'}
+            </button>
+          )
+        })()}
         {hasAnyRoot && (
           <div className="relative flex-shrink-0">
             <button

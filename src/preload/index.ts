@@ -644,6 +644,8 @@ const api = {
   }> => ipcRenderer.invoke('irLibrary:getIrLabStatus'),
   irLibrarySendTrayToIrLab: (): Promise<{ success: boolean; reason?: string }> =>
     ipcRenderer.invoke('irLibrary:sendTrayToIrLab'),
+  irLibrarySendPlayCabToIrLab: (itemIds: string[]): Promise<{ success: boolean; reason?: string }> =>
+    ipcRenderer.invoke('irLibrary:sendPlayCabToIrLab', itemIds),
   irLibraryFindDuplicates: (options: {
     libraryRootId?: number | null
     folderId?: number | null

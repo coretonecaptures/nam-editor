@@ -36,6 +36,25 @@ describe('buildIrLabUrl', () => {
     expect(params.getAll('item')).toEqual(items.slice(0, 8))
   })
 
+  it('builds a playcab URL with repeated item= keys, not comma-joined', () => {
+    const url = buildIrLabUrl('irlab://', {
+      kind: 'playcab',
+      items: ['C:\\IRs\\a.wav', 'C:\\IRs\\b.wav']
+    })
+    const params = new URLSearchParams(url.split('?')[1])
+    expect(url.startsWith('irlab://playcab?')).toBe(true)
+    expect(params.getAll('item')).toEqual(['C:\\IRs\\a.wav', 'C:\\IRs\\b.wav'])
+    expect(url).not.toContain(',')
+  })
+
+  it('caps playcab at 4 items — 1-2 fill Cab A/B, 3-4 fill both lanes of a stereo rig', () => {
+    const items = Array.from({ length: 8 }, (_, i) => `C:\\IRs\\${i}.wav`)
+    const url = buildIrLabUrl('irlab://', { kind: 'playcab', items })
+    const params = new URLSearchParams(url.split('?')[1])
+    expect(params.getAll('item')).toHaveLength(4)
+    expect(params.getAll('item')).toEqual(items.slice(0, 4))
+  })
+
   it('builds a project URL with an optional preset, omitted when not given', () => {
     const withPreset = buildIrLabUrl('irlab://', { kind: 'project', id: 'proj-1', preset: 'Cab IR' })
     expect(new URLSearchParams(withPreset.split('?')[1]).get('preset')).toBe('Cab IR')

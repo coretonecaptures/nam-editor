@@ -583,6 +583,53 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
     return sendToIrLab({ kind: 'blend', items: absPaths })
   })
+  // "Play in IR Lab" (ir-library-gpt-audit-2026-09-25's P0) — loads directly into Live Audition's
+  // Cab A/B slots instead of opening Blender, so it needs its OWN handoff, not a reuse of
+  // sendTrayToIrLab's blend route. Same pre-flight allowlist as blend (both load real cab IR
+  // files, so the same three configured folders apply) and the same 4-item cap `buildIrLabUrl`
+  // already enforces — checked again here so a caller sending more than 4 gets a clear reason
+  // instead of a URL that silently truncates. NOT YET RECEIVED by IR Lab's own
+  // ExternalHandoffRouter.cpp as of this comment — see docs/ir-lab-play-in-ir-lab-spec-2026-09-25.md.
+  ipcMain.handle('irLibrary:sendPlayCabToIrLab', async (_event, itemIds: string[]) => {
+    if (itemIds.length === 0) return { success: false, reason: 'No items selected.' }
+    if (itemIds.length > 4) {
+      return { success: false, reason: 'Play in IR Lab takes at most 4 IRs (1-2 for a normal rig, up to 4 for a stereo rig).' }
+    }
+    const database = getDb()
+    const placeholders = itemIds.map(() => '?').join(',')
+    const rows = database
+      .prepare(
+        `SELECT item.id as id, library_root.path as rootPath, item.relative_path as relativePath
+         FROM item JOIN library_root ON library_root.id = item.library_root_id
+         WHERE item.id IN (${placeholders})`
+      )
+      .all(...itemIds) as Array<{ id: string; rootPath: string; relativePath: string }>
+    if (rows.length !== itemIds.length) return { success: false, reason: 'One or more selected items could not be found in the catalog.' }
+    const absPaths = rows.map((r) => join(r.rootPath, ...r.relativePath.split('/')))
+
+    const check = checkBlendAllowlist(absPaths)
+    if (check.noRootsConfigured) {
+      return {
+        success: false,
+        reason:
+          'IR Lab has no Cab IR, Reverb IR, or DI folder configured yet, so it will reject every item ' +
+          'you send. Open IR Lab → Live Audition settings and set at least one of those folders first.'
+      }
+    }
+    if (check.rejected.length > 0) {
+      const n = check.rejected.length
+      return {
+        success: false,
+        reason:
+          `${n} of ${absPaths.length} selected item${absPaths.length === 1 ? '' : 's'} ` +
+          `${n === 1 ? "isn't" : "aren't"} inside any of IR Lab's configured Cab IR / Reverb IR / DI ` +
+          `folders, so IR Lab would silently drop ${n === 1 ? 'it' : 'them'}. Move ${n === 1 ? 'it' : 'them'} ` +
+          `into one of those folders, or add this folder in IR Lab's Live Audition settings, then try again.`
+      }
+    }
+
+    return sendToIrLab({ kind: 'playcab', items: absPaths })
+  })
   // The other two handoff routes IR Lab's ExternalHandoffRouter has always supported
   // (irlab://session, irlab://project) — build plan section 11. Both payloads are just IDs IR Lab
   // already knows how to resolve through its own SessionStore/ProjectStore; nothing catalog-

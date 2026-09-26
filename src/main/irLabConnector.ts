@@ -22,6 +22,15 @@ import { shell } from 'electron'
 export type IrLabPayload =
   | { kind: 'session'; captureId: string }
   | { kind: 'blend'; items: string[] } // capped at 8 by the caller — see irCatalog/tray.ts
+  // Added 2026-09-25 (ir-library-gpt-audit's "Play in IR Lab" — the direct Live Audition
+  // Cab A/B loader, distinct from `blend`'s Blender-window handoff). Deliberately its OWN route
+  // rather than overloading `blend` — same reasoning the audit itself gives: these are different
+  // workflows. Capped at 4 items by the caller (irLibraryIpc.ts): 1-2 fill Cab A/B on a normal
+  // rig, 3-4 fill both cab slots on each lane of a stereo rig. NOT YET IMPLEMENTED on IR Lab's
+  // receiving side (ExternalHandoffRouter.cpp only handles session/blend/nam/namgroup/project as
+  // of this comment) — see docs/ir-lab-play-in-ir-lab-spec-2026-09-25.md for the IR Lab-side
+  // contract this route needs.
+  | { kind: 'playcab'; items: string[] }
   | { kind: 'project'; id: string; preset?: string }
   // Added 2026-09-11: IR Lab shipped its receiving side (commit bb2ece4, "NAM Lab integration:
   // incoming nam/namgroup routes + outbound bridge") ahead of NAM Lab having a sender. Both are
@@ -55,6 +64,10 @@ export function buildIrLabUrl(scheme: string, payload: IrLabPayload): string {
     case 'blend':
       path = 'blend'
       for (const item of payload.items.slice(0, 8)) params.append('item', item)
+      break
+    case 'playcab':
+      path = 'playcab'
+      for (const item of payload.items.slice(0, 4)) params.append('item', item)
       break
     case 'project':
       path = 'project'

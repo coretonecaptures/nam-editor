@@ -708,6 +708,7 @@ declare global {
         trialDaysRemaining: number | null
       }>
       irLibrarySendTrayToIrLab: () => Promise<{ success: boolean; reason?: string }>
+      irLibrarySendPlayCabToIrLab: (itemIds: string[]) => Promise<{ success: boolean; reason?: string }>
       irLibraryFindDuplicates: (options: { libraryRootId?: number | null; folderId?: number | null }) => Promise<{
         sets: Array<{
           contentHash: string
