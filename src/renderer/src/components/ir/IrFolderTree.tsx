@@ -325,6 +325,7 @@ export function IrFolderTree({
   onLibraryChanged,
   onRescanRoot,
   onDropItems,
+  onPreviewProjectImport,
   refreshSignal
 }: {
   libraryRootCount: number
@@ -333,6 +334,10 @@ export function IrFolderTree({
   /** Called after a folder or whole root is actually removed, so the shell can clear the selected
    * folder if it was the one removed, refresh the root list, and refetch the browse list/Overview. */
   onLibraryChanged: () => void
+  /** Right-click "Preview Project Import…" on a node that IS an IR Lab Project folder
+   * (`isLabProject`, ir-library-gpt-audit-2026-09-25's P0). Omit to disable the menu item entirely
+   * — the shell owns the actual preview modal, same division of responsibility as `onRescanRoot`. */
+  onPreviewProjectImport?: (node: { id: number; libraryRootId: number; name: string }) => void
   /** Right-click "Rescan" -- there's no narrower per-subfolder scan in the pipeline (importLibrary
    * walks a whole library_root each time), so this re-scans the clicked node's whole containing
    * root regardless of whether the node itself IS that root or a subfolder under it. The shell owns
@@ -606,6 +611,18 @@ export function IrFolderTree({
               label: 'New Subfolder…',
               onClick: () => openNewFolderDialog(contextMenu.node)
             },
+            ...(contextMenu.node.isLabProject && onPreviewProjectImport
+              ? [
+                  {
+                    label: 'Preview Project Import…',
+                    onClick: () => {
+                      const node = contextMenu.node
+                      setContextMenu(null)
+                      onPreviewProjectImport({ id: node.id, libraryRootId: node.libraryRootId, name: node.name })
+                    }
+                  }
+                ]
+              : []),
             // Renaming/deleting the library root folder itself is a different, riskier operation
             // (relocating what the whole library_root row points at) already partially covered by
             // the existing relink-root flow elsewhere — kept out of this tree's own menu rather

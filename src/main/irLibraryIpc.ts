@@ -35,6 +35,7 @@ import { checkBlendAllowlist, checkNamAllowlist, readIrLabNamFolder } from './ir
 import { readIrLabStatus } from './irLabStatus'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
+import { previewProjectImport } from './irCatalog/labProjectImportPreview'
 import { findDuplicates } from './irCatalog/duplicates'
 import { getCoverageMatrix } from './irCatalog/coveragePlanner'
 import { renameItem, renameItemsBatch, moveItems, trashItems, copyItems, ensureDestinationFolder, createFolder, renameFolder, deleteFolder } from './irCatalog/fileOps'
@@ -291,6 +292,24 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
   ipcMain.handle('irLibrary:getProjectDetailForFolder', (_event, folderId: number) => {
     return getProjectDetailForFolder(getDb(), folderId)
+  })
+
+  // Project Import Preview + Repair (ir-library-gpt-audit-2026-09-25's other P0: "project import is
+  // scan-led, not project-led" — enrichLabProjects above writes immediately on every scan, with no
+  // step where the user sees what's about to change first). Scoped to one project folder at a time,
+  // not the audit's full library-wide matched/missing/changed dashboard — see
+  // labProjectImportPreview.ts's own header for why. Apply deliberately re-runs enrichLabProjects
+  // (now folder-scoped via its optional third arg) rather than writing exactly the previewed diff —
+  // the one place this feature departs from spreadsheetImport.ts/libraryCleanup.ts's usual "apply
+  // exactly what was previewed, never recompute" rule. Acceptable here because: (1) this is a
+  // single-user desktop app with no concurrent writer to race against between preview and apply,
+  // and (2) enrichLabProjects is the same already-tested, already-shipped write path every ordinary
+  // scan already runs, so reusing it can't introduce a second, divergent way of writing this data.
+  ipcMain.handle('irLibrary:previewProjectImport', (_event, folderId: number) => {
+    return previewProjectImport(getDb(), folderId)
+  })
+  ipcMain.handle('irLibrary:applyProjectImport', (_event, folderId: number, libraryRootId: number) => {
+    return enrichLabProjects(getDb(), libraryRootId, folderId)
   })
 
   // "NAM Projects" mode (docs/nam-capture-import-plan-2026-08-29.md §1). listNamProjects backs

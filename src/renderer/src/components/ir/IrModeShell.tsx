@@ -27,6 +27,7 @@ import { IrItemDetailPanel } from './IrItemDetailPanel'
 import { IrSpreadsheetImportModal } from './IrSpreadsheetImportModal'
 import { IrMetadataSuggestRulesModal } from './IrMetadataSuggestRulesModal'
 import { IrApplySuggestionsModal } from './IrApplySuggestionsModal'
+import { IrProjectImportPreviewModal } from './IrProjectImportPreviewModal'
 import { IrLibraryCleanupModal } from './IrLibraryCleanupModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
 
@@ -326,6 +327,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
   const [showSpreadsheetImport, setShowSpreadsheetImport] = useState(false)
   const [showSuggestRules, setShowSuggestRules] = useState(false)
   const [showApplySuggestions, setShowApplySuggestions] = useState(false)
+  const [previewProjectImportTarget, setPreviewProjectImportTarget] = useState<{ id: number; libraryRootId: number; name: string } | null>(null)
   const updateSuggestRules = useCallback(
     (nextRules: typeof appSettings.irMetadataSuggestRuleLibrary) => {
       const updated = { ...appSettings, irMetadataSuggestRuleLibrary: nextRules }
@@ -1986,6 +1988,15 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           onApplied={invalidateAndRefetch}
         />
       )}
+      {previewProjectImportTarget && (
+        <IrProjectImportPreviewModal
+          folderId={previewProjectImportTarget.id}
+          libraryRootId={previewProjectImportTarget.libraryRootId}
+          folderName={previewProjectImportTarget.name}
+          onClose={() => setPreviewProjectImportTarget(null)}
+          onApplied={invalidateAndRefetch}
+        />
+      )}
       {showDuplicates && (
         <IrDuplicatesModal
           libraryRootId={selectedRootId}
@@ -2154,6 +2165,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
                 if (payload.itemIds.length === 0) return
                 void window.api.irLibraryMoveItems(payload.itemIds, destFolderId).then(handleMoved)
               }}
+              onPreviewProjectImport={setPreviewProjectImportTarget}
               refreshSignal={treeRefreshSignal}
             />
           </div>

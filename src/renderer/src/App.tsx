@@ -631,6 +631,21 @@ declare global {
           variants: Array<{ id: string; name: string; isCurrent: boolean; isArchived: boolean; createdAt: string | null }>
         }>
       } | null>
+      irLibraryPreviewProjectImport: (folderId: number) => Promise<{
+        folderId: number
+        libraryRootId: number
+        projectName: string
+        irLabProjectId: string | null
+        missingCaptureNames: string[]
+        captures: Array<{
+          itemId: string
+          displayName: string
+          captureId: string
+          changes: Array<{ field: string; label: string; currentValue: string | null; newValue: string; blockedByUserEdit: boolean }>
+        }>
+        changedFieldCount: number
+      } | null>
+      irLibraryApplyProjectImport: (folderId: number, libraryRootId: number) => Promise<{ projectsFound: number; itemsEnriched: number }>
       irLibraryPreviewFolderRemoval: (folderId: number) => Promise<{ itemCount: number; folderCount: number }>
       irLibraryRemoveFolderFromCatalog: (folderId: number) => Promise<{ itemsRemoved: number; foldersRemoved: number }>
       irLibraryPreviewLibraryRootRemoval: (libraryRootId: number) => Promise<{ itemCount: number; folderCount: number }>

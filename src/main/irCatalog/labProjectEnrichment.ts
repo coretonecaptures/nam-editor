@@ -28,12 +28,12 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { irFieldTargetTable, irFieldTargetIdColumn } from './fieldConfidence'
 
-interface CaptureIndexEntry {
+export interface CaptureIndexEntry {
   captureId: string
   outputFileName: string
 }
 
-interface ProjectJson {
+export interface ProjectJson {
   id?: string
   name?: string
   createdAt?: string
@@ -51,7 +51,7 @@ interface ProjectJson {
   projectNotes?: string
 }
 
-interface SessionJson {
+export interface SessionJson {
   // CaptureMetadata, written into session.json's "metadata" key (SessionStore.cpp's
   // writeSessionJson/metadataJson — confirmed directly in source, not inferred from the handoff
   // doc's own wording, which describes this as living in analysis.json). The 2026-08-26 additions
@@ -99,13 +99,13 @@ interface SessionJson {
   }
 }
 
-interface AnalysisJson {
+export interface AnalysisJson {
   measurement?: { sampleRate?: number }
   isStereo?: boolean
   isTrueStereo?: boolean
 }
 
-interface VariantJson {
+export interface VariantJson {
   id: string
   name?: string
   master?: string
@@ -121,7 +121,7 @@ export interface LabProjectEnrichStats {
   itemsEnriched: number
 }
 
-function readJson<T>(absPath: string): T | null {
+export function readJson<T>(absPath: string): T | null {
   try {
     return JSON.parse(fs.readFileSync(absPath, 'utf8')) as T
   } catch {
@@ -179,13 +179,27 @@ function makeIrNumericFieldWriter(
   }
 }
 
-export function enrichLabProjects(db: DatabaseSync, libraryRootId: number): LabProjectEnrichStats {
+/** `folderId`, when given, restricts the scan to that one folder instead of every folder under
+ * the root — used by `applyProjectImportPreview` (irLibraryIpc.ts) so "Apply" on a previewed
+ * project only touches THAT project, reusing this exact, already-tested write path rather than a
+ * second implementation. See that call site's own comment on the one honest tradeoff this
+ * reuse makes (re-running this instead of writing exactly the previewed diff, matching
+ * spreadsheetImport.ts/libraryCleanup.ts's usual "never recompute" rule) and why it's acceptable
+ * here. */
+export function enrichLabProjects(db: DatabaseSync, libraryRootId: number, folderId?: number): LabProjectEnrichStats {
   const root = db.prepare(`SELECT path FROM library_root WHERE id = ?`).get(libraryRootId) as { path: string } | undefined
   if (!root) return { projectsFound: 0, itemsEnriched: 0 }
 
-  const folders = db
-    .prepare(`SELECT id, relative_path FROM folder WHERE library_root_id = ?`)
-    .all(libraryRootId) as Array<{ id: number; relative_path: string }>
+  const folders =
+    folderId != null
+      ? (db.prepare(`SELECT id, relative_path FROM folder WHERE library_root_id = ? AND id = ?`).all(libraryRootId, folderId) as Array<{
+          id: number
+          relative_path: string
+        }>)
+      : (db.prepare(`SELECT id, relative_path FROM folder WHERE library_root_id = ?`).all(libraryRootId) as Array<{
+          id: number
+          relative_path: string
+        }>)
 
   const ensureIrItem = db.prepare(`INSERT OR IGNORE INTO ir_item (item_id) VALUES (?)`)
   const writeField = makeIrFieldWriter(db)
