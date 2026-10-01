@@ -9,6 +9,7 @@ import {
   type FacetState
 } from './NamProjectsShell'
 import type { NamCaptureRow } from '../../types/namProjects'
+import { resolveTrainIntentCaptures, defaultTicked } from './TrainFromIrLabModal'
 import type { TrainerQueueJob } from '../../types/trainer'
 
 /** Top-10 NAM Projects to-do item: "pure helpers already extractable and untested" (TODO.md ->
@@ -308,5 +309,31 @@ describe('toBatchItem', () => {
   it('captureId falls back to itemId when the sidecar never set one', () => {
     const item = toBatchItem(makeCapture({ captureId: null, itemId: 'fallback-id' }), 'P')
     expect(item.captureId).toBe('fallback-id')
+  })
+})
+
+describe('Train from IR Lab — capture resolution and default ticks', () => {
+  const a = makeCapture({ itemId: 'i-a', captureId: 'a' })
+  const b = makeCapture({ itemId: 'i-b', captureId: 'b', trained: true })
+  const c = makeCapture({ itemId: 'i-c', captureId: 'c', recordingPath: null })
+
+  it('scope=untrained takes every capture this catalog says is untrained', () => {
+    const out = resolveTrainIntentCaptures({ scope: 'untrained', captureIds: [] }, [a, b, c])
+    expect(out.captures.map((x) => x.captureId)).toEqual(['a', 'c'])
+    expect(out.missingIds).toEqual([])
+  })
+
+  it('scope=selected keeps the order IR Lab sent and reports ids it cannot find', () => {
+    const out = resolveTrainIntentCaptures({ scope: 'selected', captureIds: ['b', 'zz', 'a'] }, [a, b, c])
+    expect(out.captures.map((x) => x.captureId)).toEqual(['b', 'a'])
+    expect(out.missingIds).toEqual(['zz'])
+  })
+
+  it('only a clean, trainable capture starts ticked', () => {
+    const conflict = { captureId: 'a', modelName: 'x', existingFilePath: '/o/x.nam', historyMatch: null, duplicateInBatch: false }
+    expect(defaultTicked(a, undefined)).toBe(true)
+    expect(defaultTicked(a, conflict)).toBe(false) // name looks trained before
+    expect(defaultTicked(b, undefined)).toBe(false) // result file says trained
+    expect(defaultTicked(c, undefined)).toBe(false) // no WAVs
   })
 })

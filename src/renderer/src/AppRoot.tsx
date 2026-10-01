@@ -3,7 +3,7 @@ import App from './App'
 import { IrModeShell } from './components/ir/IrModeShell'
 import { NamProjectsShell } from './components/ir/NamProjectsShell'
 import { ModeRail, type AppMode } from './components/ModeRail'
-import { onGoToTrainingBatches, onGoToNamProject, goToNamProject } from './appNav'
+import { onGoToTrainingBatches, onGoToNamProject, goToNamProject, goToNamTrain } from './appNav'
 
 const MODE_KEY = 'nam-lab-app-mode'
 
@@ -71,6 +71,21 @@ export default function AppRoot(): React.ReactElement {
     const unsubscribe = window.api.onNamLabOpenProject((projectId) => goToNamProject(projectId))
     window.api.getPendingNamLabProject().then((projectId) => {
       if (projectId) goToNamProject(projectId)
+    })
+    return unsubscribe
+  }, [])
+  // IR Lab's "Train in NAM Lab" -> namlab://train?... Opens NAM Projects even when that mode is
+  // hidden from the rail: unlike a passive "open project" link, this is an explicit request to act
+  // there, and dropping it silently would leave the IR Lab button looking broken.
+  useEffect(() => {
+    const unsubscribe = window.api.onNamLabTrain((intent) => {
+      setMode('nam-projects')
+      goToNamTrain(intent)
+    })
+    window.api.getPendingNamLabTrain().then((intent) => {
+      if (!intent) return
+      setMode('nam-projects')
+      goToNamTrain(intent)
     })
     return unsubscribe
   }, [])

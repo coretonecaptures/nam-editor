@@ -5,7 +5,9 @@ import type {
   NamProjectDetail,
   NamLibraryOverview,
   NamCaptureRow,
-  NamCaptureMetadataPatch
+  NamCaptureMetadataPatch,
+  NamLabTrainIntent,
+  NamCaptureNameConflict
 } from '../shared/namProjects'
 
 /** One mic slot's structured detail (labProjectEnrichment.ts's ProjectDetailMic) — shared by
@@ -166,6 +168,16 @@ const api = {
     ipcRenderer.on('namlab:openProject', handler)
     return () => ipcRenderer.removeListener('namlab:openProject', handler)
   },
+  getPendingNamLabTrain: (): Promise<NamLabTrainIntent | null> => ipcRenderer.invoke('app:getPendingNamLabTrain'),
+  onNamLabTrain: (cb: (intent: NamLabTrainIntent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, intent: NamLabTrainIntent) => cb(intent)
+    ipcRenderer.on('namlab:train', handler)
+    return () => ipcRenderer.removeListener('namlab:train', handler)
+  },
+  checkNamCaptureNameConflicts: (req: {
+    finalModelRoot: string
+    captures: Array<{ captureId: string; captureName: string; recordingPath: string }>
+  }): Promise<NamCaptureNameConflict[]> => ipcRenderer.invoke('trainer:checkNamCaptureNameConflicts', req),
   checkForUpdates: (includeRc: boolean): Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }> =>
     ipcRenderer.invoke('app:checkForUpdates', includeRc),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),

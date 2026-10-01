@@ -9,9 +9,10 @@ import { registerIrLibraryIpc } from './irLibraryIpc'
 import { deleteWithFallback } from './trashFile'
 import { stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
-import { buildNamCaptureImportPayloads, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
+import { buildNamCaptureImportPayloads, findModelNameConflicts, sanitizeTrainerPathPart, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
 import { parseNamLabUrl } from './namLabUrl'
+import type { NamLabTrainIntent } from '../shared/namProjects'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -20,17 +21,29 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 // same "hold the intent until the window can act on it" shape as appNav.ts's renderer-side
 // pendingSection, just on the main-process side of the same problem.
 let pendingNamLabProjectId: string | null = null
+let pendingNamLabTrain: NamLabTrainIntent | null = null
 
 function handleNamLabUrl(urlString: string): void {
   const parsed = parseNamLabUrl(urlString)
   if (!parsed) return
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
-    mainWindow.webContents.send('namlab:openProject', parsed.id)
-  } else {
-    pendingNamLabProjectId = parsed.id
+  const live = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  if (live) {
+    if (live.isMinimized()) live.restore()
+    live.focus()
   }
+  if (parsed.route === 'project') {
+    if (live) live.webContents.send('namlab:openProject', parsed.id)
+    else pendingNamLabProjectId = parsed.id
+    return
+  }
+  const intent: NamLabTrainIntent = {
+    projectId: parsed.projectId,
+    captureIds: parsed.captureIds,
+    scope: parsed.scope,
+    projectFolder: parsed.projectFolder
+  }
+  if (live) live.webContents.send('namlab:train', intent)
+  else pendingNamLabTrain = intent
 }
 
 // Electron's own documented dev-mode pattern: a packaged build can just register the app itself;
@@ -2358,15 +2371,6 @@ function makeTrainerWatcherSnapshot(): TrainerProfilesStateSnapshot {
       })),
     graphRetentionEnabled: trainingRetainGraphs,
   }
-}
-
-function sanitizeTrainerPathPart(value: string): string {
-  return value
-    .replace(/[\\/]+/g, ' - ')
-    .replace(/[:*?"<>|]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[. ]+$/g, '')
 }
 
 function fillTrainerNamingTemplate(
@@ -7859,6 +7863,13 @@ app.whenReady().then(async () => {
     return id
   })
 
+  // Same pull model for IR Lab's namlab://train?... ("Train in NAM Lab").
+  ipcMain.handle('app:getPendingNamLabTrain', () => {
+    const intent = pendingNamLabTrain
+    pendingNamLabTrain = null
+    return intent
+  })
+
   // IPC: Open URL in default browser
   ipcMain.handle('app:openExternal', (_event, url: string) => {
     openExternalSafe(url, ['https:', 'mailto:'])
@@ -8000,6 +8011,15 @@ app.whenReady().then(async () => {
     const queued = await enqueueTrainingPayloads(validPayloads, opts?.staged ?? false)
     return { success: true, queued }
   })
+
+  // "Have I trained this before?" by model NAME, for the Train-from-IR-Lab review dialog — catches
+  // what a capture's own nam-lab-result.json can't: the same capture name trained from another
+  // project/folder, a re-captured take, or a .nam already sitting at the output path.
+  ipcMain.handle(
+    'trainer:checkNamCaptureNameConflicts',
+    async (_event, req: { finalModelRoot: string; captures: Array<{ captureId: string; captureName: string; recordingPath: string }> }) =>
+      findModelNameConflicts(req.captures ?? [], req.finalModelRoot ?? '', trainerHistory, (p) => fs.existsSync(p))
+  )
 
   // "Queue all for training" from the NAM Projects mode (docs/nam-capture-import-plan-2026-08-29.md
   // §4). Builds one job per capture — each with its own excitation/recording pair — via the

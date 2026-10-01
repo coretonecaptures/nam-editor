@@ -4,6 +4,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import {
   buildNamCaptureImportPayloads,
+  findModelNameConflicts,
   type NamCaptureImportItem,
   type NamCaptureImportConfig,
   type NamCaptureImportDefaults,
@@ -159,5 +160,52 @@ describe('buildNamCaptureImportPayloads', () => {
     expect(r1.payloads).toEqual([])
     const r2 = await buildNamCaptureImportPayloads([item('a')], { ...baseConfig, finalModelRoot: '' }, defaults, stdProfile)
     expect(r2.payloads).toEqual([])
+  })
+})
+
+describe('findModelNameConflicts', () => {
+  const hist = (finalModelName: string, status: 'success' | 'error' = 'success', timestamp = '2026-09-01T00:00:00Z') => ({
+    status,
+    finalModelName,
+    finalModelPath: `/models/${finalModelName}.nam`,
+    timestamp,
+    sourcePath: `/src/${finalModelName}.wav`
+  })
+  const cap = (captureId: string, captureName: string) => ({ captureId, captureName, recordingPath: `/p/${captureName || 'rec'}.wav` })
+
+  it('flags a name a past successful run produced, case-insensitively and ignoring a (1) suffix', () => {
+    const out = findModelNameConflicts([cap('a', 'Clean Ch1')], '', [hist('clean ch1 (1)')], () => false)
+    expect(out).toHaveLength(1)
+    expect(out[0].historyMatch?.finalModelPath).toBe('/models/clean ch1 (1).nam')
+  })
+
+  it('ignores failed runs and unrelated names', () => {
+    expect(findModelNameConflicts([cap('a', 'Clean')], '', [hist('Clean', 'error'), hist('Crunch')], () => false)).toEqual([])
+  })
+
+  it('reports the newest matching run', () => {
+    const out = findModelNameConflicts(
+      [cap('a', 'Lead')],
+      '',
+      [hist('Lead', 'success', '2026-01-01T00:00:00Z'), { ...hist('Lead', 'success', '2026-06-01T00:00:00Z'), finalModelPath: '/new/Lead.nam' }],
+      () => false
+    )
+    expect(out[0].historyMatch?.finalModelPath).toBe('/new/Lead.nam')
+  })
+
+  it('flags a model file already sitting at the output path, using the trainer\'s sanitized name', () => {
+    const seen: string[] = []
+    const out = findModelNameConflicts([cap('a', 'Amp: Clean?')], '/out', [], (p) => {
+      seen.push(p)
+      return true
+    })
+    expect(seen).toEqual([join('/out', 'Amp Clean.nam')])
+    expect(out[0].existingFilePath).toBe(join('/out', 'Amp Clean.nam'))
+  })
+
+  it('flags captures in the same batch that resolve to the same model name', () => {
+    const out = findModelNameConflicts([cap('a', 'Edge'), cap('b', 'edge'), cap('c', 'Other')], '', [], () => false)
+    expect(out.map((c) => c.captureId)).toEqual(['a', 'b'])
+    expect(out.every((c) => c.duplicateInBatch)).toBe(true)
   })
 })

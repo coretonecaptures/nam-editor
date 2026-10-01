@@ -11,6 +11,7 @@
  * The jobs are already in the main-process trainer queue; TrainingPanel picks them up through
  * its own trainer:update subscription, so no job data crosses the shell boundary.
  */
+import type { NamLabTrainIntent } from './types/namProjects'
 
 export type TrainingNavSection = 'batches' | 'queue'
 
@@ -62,16 +63,45 @@ export function consumePendingTrainingNav(): TrainingNavSection | null {
 let pendingNamProjectId: string | null = null
 const namProjectListeners = new Set<() => void>()
 
-/** Called from App.tsx's main-process listener once a namlab:// URL resolves to a project id. */
-export function goToNamProject(projectId: string): void {
-  pendingNamProjectId = projectId
-  for (const l of namProjectListeners) {
+// NamProjectsShell's own subscription: a deep link that arrives while the shell is ALREADY
+// mounted must be acted on too — consume-on-mount alone only covers a mode switch.
+const namShellListeners = new Set<() => void>()
+
+/** NamProjectsShell subscribes; the callback should consume the pending project/train nav. */
+export function onNamProjectsIntent(cb: () => void): () => void {
+  namShellListeners.add(cb)
+  return () => namShellListeners.delete(cb)
+}
+
+let pendingNamTrain: NamLabTrainIntent | null = null
+
+/** IR Lab's namlab://train?... — same flow as goToNamProject, carrying the captures to review. */
+export function goToNamTrain(intent: NamLabTrainIntent): void {
+  pendingNamTrain = intent
+  notifyNamProjectListeners()
+}
+
+/** NamProjectsShell calls this on mount and on onNamProjectsIntent; returns the intent or null. */
+export function consumePendingNamTrainNav(): NamLabTrainIntent | null {
+  const v = pendingNamTrain
+  pendingNamTrain = null
+  return v
+}
+
+function notifyNamProjectListeners(): void {
+  for (const l of [...namProjectListeners, ...namShellListeners]) {
     try {
       l()
     } catch {
       // A listener throwing must not stop the others or the caller.
     }
   }
+}
+
+/** Called from App.tsx's main-process listener once a namlab:// URL resolves to a project id. */
+export function goToNamProject(projectId: string): void {
+  pendingNamProjectId = projectId
+  notifyNamProjectListeners()
 }
 
 /** AppRoot subscribes; the callback should switch to NAM Projects mode. Returns an unsubscribe fn. */

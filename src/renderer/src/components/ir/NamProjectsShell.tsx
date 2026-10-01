@@ -16,10 +16,12 @@ import type {
   NamProjectDetail,
   NamCaptureRow,
   NamCaptureMetadataPatch,
-  NamLibraryOverview
+  NamLibraryOverview,
+  NamLabTrainIntent
 } from '../../types/namProjects'
 import type { TrainerHistoryEntry, TrainerQueueJob } from '../../types/trainer'
-import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav } from '../../appNav'
+import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav, consumePendingNamTrainNav, onNamProjectsIntent } from '../../appNav'
+import { TrainFromIrLabModal, resolveTrainIntentCaptures, type TrainReviewRequest } from './TrainFromIrLabModal'
 import { SettingsPanel } from '../SettingsPanel'
 import { IrHelpModal } from './IrHelpModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
@@ -2493,15 +2495,102 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     void refreshProjects()
   }, [refreshProjects])
 
-  // IR Lab's "Manage in NAM Lab..." button lands here via appNav's pending-nav slot (AppRoot
-  // already flipped mode to 'nam-projects' before this shell mounted). One-shot by construction.
+  // --- IR Lab deep links (namlab://project, namlab://train) ---
+  // Both carry IR Lab's own project id — the sidecars' projectId, kept as NamProjectSummary.projectId
+  // — never this catalog's collectionId, so they're resolved against a fresh project list. If the
+  // project isn't catalogued yet, every library root is rescanned once (IR Lab may have just made
+  // it); for a train link IR Lab also sends the project's folder, which can be added on the spot.
+  const [trainReview, setTrainReview] = useState<TrainReviewRequest | null>(null)
+
+  const findIrLabProject = useCallback(
+    async (irLabProjectId: string, projectFolder: string | null): Promise<NamProjectSummary | null> => {
+      const lookup = async (): Promise<NamProjectSummary | null> => {
+        const list = await window.api.irLibraryListNamProjects()
+        setProjects(list)
+        return list.find((p) => p.projectId === irLabProjectId) ?? null
+      }
+      let found = await lookup()
+      if (found) return found
+      setScanning(true)
+      try {
+        for (const root of await window.api.irLibraryListRoots()) await window.api.irLibraryScan(root.path, root.label)
+        found = await lookup()
+        if (found || !projectFolder) return found
+        const { response } = await window.api.showMessageBox({
+          type: 'question',
+          title: 'Add IR Lab project?',
+          message: 'This IR Lab project isn’t in your NAM Lab library yet.',
+          detail: `Add its folder to the library so it can be trained?\n\n${projectFolder}`,
+          buttons: ['Add Folder', 'Cancel'],
+          defaultId: 0,
+          cancelId: 1
+        })
+        if (response !== 0) return null
+        await window.api.irLibraryScan(projectFolder, null)
+        return await lookup()
+      } finally {
+        setScanning(false)
+      }
+    },
+    []
+  )
+
+  const handleTrainIntent = useCallback(
+    async (intent: NamLabTrainIntent) => {
+      setError(null)
+      setMessage(null)
+      try {
+        const project = await findIrLabProject(intent.projectId, intent.projectFolder)
+        if (!project) {
+          setError('IR Lab sent a project that isn’t in this library. Add its folder with Add Library Folder, then try again.')
+          return
+        }
+        setSelectedId(project.collectionId)
+        setView('overview')
+        // Rescan this project's root first: IR Lab may have captured (or NAM Lab may have trained)
+        // since the last scan, and both the capture list and trained flags must be current here.
+        const root = (await window.api.irLibraryListRoots()).find((r) => r.id === project.libraryRootId)
+        if (root) await window.api.irLibraryScan(root.path, root.label)
+        const d = await window.api.irLibraryGetNamProjectDetail(project.collectionId)
+        if (!d) {
+          setError('Could not load that project.')
+          return
+        }
+        setDetail(d)
+        const resolved = resolveTrainIntentCaptures(intent, d.captures)
+        setTrainReview({ projectName: d.name, captures: resolved.captures, missingIds: resolved.missingIds })
+      } catch (err) {
+        setError(String(err))
+      }
+    },
+    [findIrLabProject]
+  )
+
+  const handleProjectIntent = useCallback(
+    async (irLabProjectId: string) => {
+      const project = await findIrLabProject(irLabProjectId, null)
+      if (project) {
+        setSelectedId(project.collectionId)
+        setView('overview')
+      } else {
+        setError('IR Lab opened a project that isn’t in this library yet. Add its folder with Add Library Folder.')
+      }
+    },
+    [findIrLabProject]
+  )
+
+  // Consumed on mount (AppRoot flipped the mode first) AND whenever a link arrives while this
+  // shell is already showing — consume-on-mount alone silently dropped the second case.
   useEffect(() => {
-    const projectId = consumePendingNamProjectNav()
-    if (projectId) {
-      setSelectedId(projectId)
-      setView('overview')
+    const consume = (): void => {
+      const projectId = consumePendingNamProjectNav()
+      if (projectId) void handleProjectIntent(projectId)
+      const train = consumePendingNamTrainNav()
+      if (train) void handleTrainIntent(train)
     }
-  }, [])
+    consume()
+    return onNamProjectsIntent(consume)
+  }, [handleProjectIntent, handleTrainIntent])
 
   useEffect(() => {
     if (selectedId) writeStored(SELECTED_KEY, selectedId)
@@ -2797,13 +2886,16 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
 
   // --- batch creation ---
   const submitBatch = useCallback(
-    async (captures: NamCaptureRow[], labelSuffix: string, mode: 'stage' | 'runNext') => {
+    async (captures: NamCaptureRow[], labelSuffix: string, mode: 'stage' | 'runNext', allowRetrain = false) => {
       if (!detail || captures.length === 0) return
       if (!outputRoot) {
         setError('Choose a model output folder first (right panel).')
         return
       }
-      const eligible = captures.filter((c) => isQueueEligible(c, true)) // include-synthetic gate handled per call site
+      // allowRetrain: the Train-from-IR-Lab review, where the user explicitly ticked a trained capture.
+      const eligible = captures.filter((c) =>
+        allowRetrain ? !!c.excitationPath && !!c.recordingPath : isQueueEligible(c, true)
+      ) // include-synthetic gate handled per call site
       if (eligible.length === 0) {
         setError('Those captures are all trained already, or missing their WAV files.')
         return
@@ -3182,6 +3274,20 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           {playerError}
           <button onClick={() => setPlayerError(null)} className="text-nm-text-3 hover:text-nm-text">×</button>
         </div>
+      )}
+      {trainReview && (
+        <TrainFromIrLabModal
+          request={trainReview}
+          outputRoot={outputRoot}
+          architectureLabel={ARCH_LABEL[architecture] ?? architecture}
+          epochs={epochs}
+          busy={queueing}
+          onChooseOutput={() => void handleChooseOutput()}
+          onSubmit={(captures, mode) => {
+            void submitBatch(captures, 'From IR Lab', mode, true).then(() => setTrainReview(null))
+          }}
+          onClose={() => setTrainReview(null)}
+        />
       )}
       {projectDefaultsTarget && (
         <IrProjectDefaultsModal

@@ -161,3 +161,27 @@ export type NamCaptureMetadataPatch = Partial<{
   inputLevelDbu: number | null
   outputLevelDbu: number | null
 }>
+
+/** IR Lab's "Train in NAM Lab" hand-off (namlab://train?...), main -> renderer. `projectId` is IR
+ * Lab's project id (the sidecars' projectId, stored as collection.naming_template), NOT a
+ * collectionId. scope 'untrained' = every capture this app's result files say is untrained. */
+export interface NamLabTrainIntent {
+  projectId: string
+  captureIds: string[]
+  scope: 'selected' | 'untrained'
+  /** The IR Lab project's folder, so a project NAM Lab has never catalogued can be added on the spot. */
+  projectFolder: string | null
+}
+
+/** One capture whose would-be model NAME suggests it was trained before (main/namCaptureTraining.ts
+ * findModelNameConflicts). Only captures with at least one reason are returned. */
+export interface NamCaptureNameConflict {
+  captureId: string
+  modelName: string
+  /** `<finalModelRoot>/<modelName>.nam` already exists — training again writes "<name> (1).nam". */
+  existingFilePath: string | null
+  /** Most recent successful run (any source) that produced a model of the same name. */
+  historyMatch: { finalModelPath: string; timestamp: string; sourcePath: string } | null
+  /** Another capture in this same batch resolves to the same model name. */
+  duplicateInBatch: boolean
+}

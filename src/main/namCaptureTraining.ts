@@ -11,7 +11,9 @@
  * passed in via `defaults` / `resolveProfile`.
  */
 import * as fs from 'node:fs'
-import type { TrainerStartPayload, WaveNetConfig } from '../shared/trainer'
+import { basename, extname, join } from 'node:path'
+import type { NamCaptureNameConflict } from '../shared/namProjects'
+import type { TrainerHistoryEntry, TrainerStartPayload, WaveNetConfig } from '../shared/trainer'
 
 export interface NamCaptureImportItem {
   excitationPath: string
@@ -169,4 +171,71 @@ export async function buildNamCaptureImportPayloads(
     })
   }
   return { payloads, skipped }
+}
+
+/** Filesystem-safe model/folder name part — the trainer's own rule for every .nam it writes. */
+export function sanitizeTrainerPathPart(value: string): string {
+  return value
+    .replace(/[\\/]+/g, ' - ')
+    .replace(/[:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+}
+
+/** The .nam basename a capture-import job will be named (before ensureUniqueFilePath adds " (1)"):
+ * buildNamCaptureImportPayloads uses captureName as the naming template, and
+ * fillTrainerNamingTemplate falls back to the recording's basename when that sanitizes to empty. */
+export function expectedCaptureModelName(captureName: string, recordingPath: string): string {
+  return sanitizeTrainerPathPart(captureName) || basename(recordingPath, extname(recordingPath)).trim() || 'model'
+}
+
+/** Case-insensitive, and ignores the " (1)" / " (2)" suffix ensureUniqueFilePath appends — so
+ * "Clean (1)" from an earlier retrain still matches a new "Clean". */
+export function modelNameKey(name: string): string {
+  return sanitizeTrainerPathPart(name).replace(/\s\(\d+\)$/, '').toLowerCase()
+}
+
+export type ModelNameConflict = NamCaptureNameConflict
+
+/** Flags captures whose model NAME suggests it has been trained before, independent of the
+ * capture's own nam-lab-result.json (which only knows about this exact capture). Only returns
+ * captures with at least one reason. */
+export function findModelNameConflicts(
+  items: Array<{ captureId: string; captureName: string; recordingPath: string }>,
+  finalModelRoot: string,
+  history: Array<Pick<TrainerHistoryEntry, 'status' | 'finalModelName' | 'finalModelPath' | 'timestamp' | 'sourcePath'>>,
+  fileExists: (p: string) => boolean
+): ModelNameConflict[] {
+  const latestByKey = new Map<string, { finalModelPath: string; timestamp: string; sourcePath: string }>()
+  for (const h of history) {
+    if (h.status !== 'success' || !h.finalModelName) continue
+    const key = modelNameKey(h.finalModelName)
+    const prev = latestByKey.get(key)
+    if (!prev || h.timestamp > prev.timestamp) {
+      latestByKey.set(key, { finalModelPath: h.finalModelPath, timestamp: h.timestamp, sourcePath: h.sourcePath })
+    }
+  }
+
+  const names = items.map((it) => expectedCaptureModelName(it.captureName, it.recordingPath))
+  const batchCounts = new Map<string, number>()
+  for (const n of names) batchCounts.set(modelNameKey(n), (batchCounts.get(modelNameKey(n)) ?? 0) + 1)
+
+  const root = finalModelRoot.trim()
+  const out: ModelNameConflict[] = []
+  items.forEach((it, i) => {
+    const modelName = names[i]
+    const key = modelNameKey(modelName)
+    const target = root ? join(root, `${modelName}.nam`) : ''
+    // A history hit on this capture's own recording is still a "you trained this before" signal.
+    const conflict: ModelNameConflict = {
+      captureId: it.captureId,
+      modelName,
+      existingFilePath: target && fileExists(target) ? target : null,
+      historyMatch: latestByKey.get(key) ?? null,
+      duplicateInBatch: (batchCounts.get(key) ?? 0) > 1
+    }
+    if (conflict.existingFilePath || conflict.historyMatch || conflict.duplicateInBatch) out.push(conflict)
+  })
+  return out
 }

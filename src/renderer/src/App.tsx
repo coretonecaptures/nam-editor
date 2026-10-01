@@ -412,7 +412,9 @@ import type {
   NamProjectDetail,
   NamLibraryOverview,
   NamCaptureRow,
-  NamCaptureMetadataPatch
+  NamCaptureMetadataPatch,
+  NamLabTrainIntent,
+  NamCaptureNameConflict
 } from './types/namProjects'
 import { consumePendingTrainingNav } from './appNav'
 
@@ -945,6 +947,12 @@ declare global {
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
       getPendingNamLabProject: () => Promise<string | null>
       onNamLabOpenProject: (cb: (projectId: string) => void) => () => void
+      getPendingNamLabTrain: () => Promise<NamLabTrainIntent | null>
+      onNamLabTrain: (cb: (intent: NamLabTrainIntent) => void) => () => void
+      checkNamCaptureNameConflicts: (req: {
+        finalModelRoot: string
+        captures: Array<{ captureId: string; captureName: string; recordingPath: string }>
+      }) => Promise<NamCaptureNameConflict[]>
       checkForUpdates: (includeRc: boolean) => Promise<{ hasUpdate?: boolean; latestVersion?: string; releaseUrl?: string; error?: string }>
       openExternal: (url: string) => Promise<void>
       showMessageBox: (options: { type?: 'none' | 'info' | 'error' | 'question' | 'warning'; title?: string; message: string; detail?: string; buttons: string[]; defaultId?: number; cancelId?: number; noLink?: boolean }) => Promise<{ response: number }>
