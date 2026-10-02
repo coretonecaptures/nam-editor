@@ -22,6 +22,7 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 // pendingSection, just on the main-process side of the same problem.
 let pendingNamLabProjectId: string | null = null
 let pendingNamLabTrain: NamLabTrainIntent | null = null
+let pendingNamLabLibrary: string | null = null
 
 function handleNamLabUrl(urlString: string): void {
   const parsed = parseNamLabUrl(urlString)
@@ -34,6 +35,30 @@ function handleNamLabUrl(urlString: string): void {
   if (parsed.route === 'project') {
     if (live) live.webContents.send('namlab:openProject', parsed.id)
     else pendingNamLabProjectId = parsed.id
+    return
+  }
+  if (parsed.route === 'library') {
+    // Validated here, not in the renderer: a link naming a folder that is gone or is a file must
+    // say so, not open NAM mode on nothing.
+    let isDirectory = false
+    try {
+      isDirectory = fs.statSync(parsed.path).isDirectory()
+    } catch {
+      isDirectory = false
+    }
+    if (!isDirectory) {
+      const options = {
+        type: 'warning' as const,
+        title: 'NAM Lab',
+        message: 'IR Lab asked NAM Lab to open a NAM library folder that does not exist.',
+        detail: `${parsed.path}\n\nCheck the NAM profile library folder in IR Lab's Settings.`,
+        buttons: ['OK']
+      }
+      void (live ? dialog.showMessageBox(live, options) : app.whenReady().then(() => dialog.showMessageBox(options)))
+      return
+    }
+    if (live) live.webContents.send('namlab:openLibrary', parsed.path)
+    else pendingNamLabLibrary = parsed.path
     return
   }
   const intent: NamLabTrainIntent = {
@@ -7861,6 +7886,13 @@ app.whenReady().then(async () => {
     const id = pendingNamLabProjectId
     pendingNamLabProjectId = null
     return id
+  })
+
+  // Same pull model for IR Lab's namlab://library?path=... ("Open NAM library in NAM Lab").
+  ipcMain.handle('app:getPendingNamLabLibrary', () => {
+    const path = pendingNamLabLibrary
+    pendingNamLabLibrary = null
+    return path
   })
 
   // Same pull model for IR Lab's namlab://train?... ("Train in NAM Lab").

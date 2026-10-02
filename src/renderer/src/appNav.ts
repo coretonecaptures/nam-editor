@@ -110,6 +110,35 @@ export function onGoToNamProject(cb: () => void): () => void {
   return () => namProjectListeners.delete(cb)
 }
 
+/**
+ * IR Lab's `namlab://library?path=<folder>`: AppRoot flips to NAM mode and parks the folder here;
+ * App consumes it on mount, or immediately through onNamLibraryIntent when it is already mounted.
+ */
+let pendingNamLibraryPath: string | null = null
+const namLibraryListeners = new Set<() => void>()
+
+export function goToNamLibrary(folderPath: string): void {
+  pendingNamLibraryPath = folderPath
+  for (const l of [...namLibraryListeners]) {
+    try {
+      l()
+    } catch {
+      // A listener throwing must not stop the others or the caller.
+    }
+  }
+}
+
+export function onNamLibraryIntent(cb: () => void): () => void {
+  namLibraryListeners.add(cb)
+  return () => namLibraryListeners.delete(cb)
+}
+
+export function consumePendingNamLibraryNav(): string | null {
+  const v = pendingNamLibraryPath
+  pendingNamLibraryPath = null
+  return v
+}
+
 /** NamProjectsShell calls this once on mount; returns the project id to open, or null. One-shot. */
 export function consumePendingNamProjectNav(): string | null {
   const v = pendingNamProjectId

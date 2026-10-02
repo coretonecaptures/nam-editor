@@ -416,7 +416,7 @@ import type {
   NamLabTrainIntent,
   NamCaptureNameConflict
 } from './types/namProjects'
-import { consumePendingTrainingNav } from './appNav'
+import { consumePendingTrainingNav, consumePendingNamLibraryNav, onNamLibraryIntent } from './appNav'
 
 declare global {
   interface Window {
@@ -848,6 +848,8 @@ declare global {
       irLibrarySendSessionToIrLab: (captureId: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendProjectToIrLab: (projectId: string, preset?: string) => Promise<{ success: boolean; reason?: string }>
       irLibrarySendNamGroupToIrLab: (items: Array<{ path: string; name?: string }>, slot?: number) => Promise<{ success: boolean; reason?: string }>
+      irLibraryPlanPublishToIrLab: (modelPaths: string[]) => Promise<{ success: boolean; reason?: string; plan?: { namFolder: string; destFolder: string; entries: Array<{ source: string; dest: string; action: 'copy' | 'identical' | 'alreadyInLibrary' | 'conflict' | 'missing' }> } }>
+      irLibraryPublishToIrLab: (modelPaths: string[], options: { keepBoth: boolean; open: boolean }) => Promise<{ success: boolean; reason?: string }>
       irLibraryListTags: () => Promise<Array<{ id: number; name: string; itemCount: number }>>
       irLibraryGetOrCreateTag: (name: string) => Promise<number>
       irLibraryRenameTag: (tagId: number, name: string) => Promise<{ success: boolean }>
@@ -948,6 +950,8 @@ declare global {
       getPendingNamLabProject: () => Promise<string | null>
       onNamLabOpenProject: (cb: (projectId: string) => void) => () => void
       getPendingNamLabTrain: () => Promise<NamLabTrainIntent | null>
+      getPendingNamLabLibrary: () => Promise<string | null>
+      onNamLabOpenLibrary: (cb: (folderPath: string) => void) => () => void
       onNamLabTrain: (cb: (intent: NamLabTrainIntent) => void) => () => void
       checkNamCaptureNameConflicts: (req: {
         finalModelRoot: string
@@ -2438,6 +2442,41 @@ export default function App({ leftRail }: { leftRail?: React.ReactNode } = {}) {
     await loadFolderByPath(folderPath)
   }, [librarian.rootFolder, loadFolderByPath, showTransientStatus])
 
+  // IR Lab's namlab://library?path=... (via AppRoot/appNav). Inside the current library: select
+  // that folder. Anywhere else: ask before replacing the library, since that rescans everything.
+  const handleOpenLibraryFromIrLab = useCallback(async (rawPath: string) => {
+    const folderPath = rawPath.replace(/\\/g, '/').replace(/\/+$/, '')
+    const currentRoot = librarian.rootFolder?.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (currentRoot && (folderPath === currentRoot || folderPath.startsWith(`${currentRoot}/`))) {
+      setLibrarian((prev) => ({ ...prev, selectedFolders: folderPath === currentRoot ? [] : [folderPath] }))
+      showTransientStatus({ message: `Opened ${folderDisplayName(folderPath)} from IR Lab.`, type: 'info' })
+      return
+    }
+    const choice = await window.api.showMessageBox({
+      type: 'question',
+      title: 'Open NAM library from IR Lab',
+      message: 'Open this folder as your NAM library?',
+      detail: currentRoot ? `${folderPath}\n\nReplaces the current library folder:\n${currentRoot}` : folderPath,
+      buttons: ['Open Folder', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    })
+    if (choice.response !== 0) return
+    await loadFolderByPath(folderPath)
+  }, [librarian.rootFolder, loadFolderByPath, showTransientStatus])
+
+  const openLibraryFromIrLabRef = useRef(handleOpenLibraryFromIrLab)
+  openLibraryFromIrLabRef.current = handleOpenLibraryFromIrLab
+  const consumeLibraryFromIrLab = useCallback((): void => {
+    const folderPath = consumePendingNamLibraryNav()
+    if (folderPath) void openLibraryFromIrLabRef.current(folderPath)
+  }, [])
+  // Warm arrival only; a cold launch consumes it in the startup effect below, AFTER the default
+  // folder has loaded -- otherwise it would compare against an empty library and then be
+  // overwritten by that load.
+  useEffect(() => onNamLibraryIntent(consumeLibraryFromIrLab), [consumeLibraryFromIrLab])
+
   // Subscribe to app:openFiles ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â for files opened while app is already running
   useEffect(() => {
     const unsub = safeOn('onOpenFiles', window.api.onOpenFiles, (paths) => loadFiles(paths, 'append'))
@@ -2452,14 +2491,15 @@ export default function App({ leftRail }: { leftRail?: React.ReactNode } = {}) {
   // Combined startup effect: pending files take priority over default folder
   // Must be placed after loadFiles and loadFolderByPath are defined
   useEffect(() => {
-    window.api.getPendingFiles().then((paths) => {
+    window.api.getPendingFiles().then(async (paths) => {
       if (paths.length > 0) {
         // File was opened via double-click / file association ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â load just those files
         loadFiles(paths, 'replace')
       } else if (settings.enableDefaultFolder && settings.defaultFolder) {
         // No pending files ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â restore last folder as normal
-        loadFolderByPath(settings.defaultFolder)
+        await loadFolderByPath(settings.defaultFolder)
       }
+      consumeLibraryFromIrLab()
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentionally empty ÃƒÆ&rsquo;Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â runs once on mount after React is ready

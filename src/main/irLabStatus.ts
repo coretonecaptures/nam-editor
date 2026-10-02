@@ -28,9 +28,17 @@ export interface IrLabStatus {
    * Kept as a field (not dropped) so a future Phase-2 activation server's trial state has
    * somewhere to land without a shape change on this side. */
   trialDaysRemaining: number | null
+  /** The irlab:// routes this IR Lab build receives (IR Lab 2026-10-01+). null = an older IR Lab
+   * that predates the list -- which also predates `playcab`, so treat null as "not supported". */
+  routes: string[] | null
 }
 
-const UNKNOWN_STATUS: IrLabStatus = { installed: false, version: null, licenseState: 'unknown', trialDaysRemaining: null }
+/** True when IR Lab's last status file says it receives this irlab:// route. */
+export function irLabSupportsRoute(status: IrLabStatus, route: string): boolean {
+  return status.routes !== null && status.routes.includes(route)
+}
+
+const UNKNOWN_STATUS: IrLabStatus = { installed: false, version: null, licenseState: 'unknown', trialDaysRemaining: null, routes: null }
 
 export function irLabStatusFile(): string {
   return join(app.getPath('appData'), 'IR Lab', 'integration-status.json')
@@ -51,7 +59,8 @@ export function parseIrLabStatus(json: string): IrLabStatus {
     installed: obj.installed === true,
     version: typeof obj.version === 'string' ? obj.version : null,
     licenseState,
-    trialDaysRemaining: typeof obj.trialDaysRemaining === 'number' ? obj.trialDaysRemaining : null
+    trialDaysRemaining: typeof obj.trialDaysRemaining === 'number' ? obj.trialDaysRemaining : null,
+    routes: Array.isArray(obj.routes) ? obj.routes.filter((r): r is string => typeof r === 'string') : null
   }
 }
 

@@ -30,9 +30,10 @@ import {
 import { importFolderDocument, listFolderDocuments, deleteFolderDocument } from './irCatalog/folderDocuments'
 import { extractVendorDocumentFields } from './irCatalog/vendorDocExtraction'
 import { addToTray, removeFromTray, listTray, isInTray, reorderTray } from './irCatalog/tray'
-import { sendToIrLab, irLabConnectorAvailable } from './irLabConnector'
+import { sendToIrLab, irLabConnectorAvailable, type IrLabSendResult } from './irLabConnector'
 import { checkBlendAllowlist, checkNamAllowlist, readIrLabNamFolder } from './irLabRoots'
-import { readIrLabStatus } from './irLabStatus'
+import { readIrLabStatus, irLabSupportsRoute } from './irLabStatus'
+import { planPublish, executePublish, pruneOldGroupManifests } from './irLabPublish'
 import { getLibraryOverview } from './irCatalog/libraryOverview'
 import { enrichLabProjects, getProjectDetailForFolder } from './irCatalog/labProjectEnrichment'
 import { previewProjectImport } from './irCatalog/labProjectImportPreview'
@@ -614,6 +615,13 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     if (itemIds.length > 4) {
       return { success: false, reason: 'Play in IR Lab takes at most 4 IRs (1-2 for a normal rig, up to 4 for a stereo rig).' }
     }
+    const irLabStatus = readIrLabStatus()
+    if (!irLabStatus.installed) {
+      return { success: false, reason: 'IR Lab has not been run on this computer yet. Install and open IR Lab once, then try again.' }
+    }
+    if (!irLabSupportsRoute(irLabStatus, 'playcab')) {
+      return { success: false, reason: 'This version of IR Lab cannot receive Play in IR Lab. Update IR Lab, open it once, then try again.' }
+    }
     const database = getDb()
     const placeholders = itemIds.map(() => '?').join(',')
     const rows = database
@@ -922,24 +930,41 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
       }
     }
 
-    // The manifest file itself must ALSO live under defaultNamFolder — IR Lab allowlists the
-    // manifest path exactly like a single .nam (ExternalHandoffRouter.cpp's own comment on the
-    // namgroup route). readIrLabNamFolder() is safe to call again here: checkNamAllowlist just
-    // confirmed it's set and every item resolves under it.
-    const namFolder = readIrLabNamFolder() as string
-    const manifestPath = join(namFolder, `nam-lab-group-${Date.now()}.json`)
-    try {
-      writeFileSync(
-        manifestPath,
-        JSON.stringify({ items: items.map((i) => ({ file: i.path, name: i.name ?? undefined })) }, null, 2),
-        'utf-8'
-      )
-    } catch (err) {
-      return { success: false, reason: `Could not write the group manifest: ${String(err)}` }
-    }
-
-    return sendToIrLab({ kind: 'namgroup', manifestPath, slot })
+    return sendNamGroup(readIrLabNamFolder() as string, items, slot)
   })
+  // "Publish to IR Lab Library" (NAML-3). Plan first (read-only), so the renderer can show
+  // destination, copies, reuses and name conflicts before anything is written.
+  ipcMain.handle('irLibrary:planPublishToIrLab', (_event, modelPaths: string[]) => {
+    const namFolder = readIrLabNamFolder()
+    if (!namFolder) {
+      return { success: false, reason: 'IR Lab has no NAM folder configured yet. Set one in IR Lab → Live Audition settings first.' }
+    }
+    const plan = planPublish(modelPaths, namFolder)
+    return { success: true, plan }
+  })
+  ipcMain.handle(
+    'irLibrary:publishToIrLab',
+    async (_event, modelPaths: string[], options: { keepBoth: boolean; open: boolean }) => {
+      const namFolder = readIrLabNamFolder()
+      if (!namFolder) return { success: false, reason: 'IR Lab has no NAM folder configured yet.' }
+      let outcome
+      try {
+        outcome = executePublish(planPublish(modelPaths, namFolder), options.keepBoth)
+      } catch (err) {
+        return { success: false, reason: `Publish stopped: ${err instanceof Error ? err.message : String(err)}` }
+      }
+      const summary = `Published ${outcome.published.length} model${outcome.published.length === 1 ? '' : 's'} to IR Lab (${outcome.copied} copied, ${outcome.reused} already there).`
+      if (!options.open || outcome.published.length === 0) return { success: true, reason: summary }
+      const sent =
+        outcome.published.length === 1
+          ? await sendToIrLab({ kind: 'nam', file: outcome.published[0] })
+          : await sendNamGroup(namFolder, outcome.published.map((path) => ({ path })))
+      // A dispatched URL is not proof IR Lab loaded anything -- say what actually happened.
+      return sent.success
+        ? { success: true, reason: `${summary} Sent to IR Lab Live Audition.` }
+        : { success: false, reason: `${summary} Opening in IR Lab failed: ${sent.reason ?? 'unknown error'}` }
+    }
+  )
   // "Reveal in folder" reuses the existing generic shell:revealFile channel (window.api.revealFile)
   // rather than a duplicate irLibrary:-prefixed one — it's a plain absolute-path reveal, nothing
   // IR-catalog-specific about it.
@@ -985,4 +1010,26 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     deleteSavedSearch(getDb(), id)
     return { success: true }
   })
+}
+
+// Writes the namgroup manifest under IR Lab's NAM folder (IR Lab allowlists the manifest path
+// exactly like a single .nam) and dispatches it. Old manifests are pruned first so repeated sends
+// don't accumulate files there.
+async function sendNamGroup(
+  namFolder: string,
+  items: Array<{ path: string; name?: string }>,
+  slot?: number
+): Promise<IrLabSendResult> {
+  pruneOldGroupManifests(namFolder)
+  const manifestPath = join(namFolder, `nam-lab-group-${Date.now()}.json`)
+  try {
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({ items: items.map((i) => ({ file: i.path, name: i.name ?? undefined })) }, null, 2),
+      'utf-8'
+    )
+  } catch (err) {
+    return { success: false, reason: `Could not write the group manifest: ${String(err)}` }
+  }
+  return sendToIrLab({ kind: 'namgroup', manifestPath, slot })
 }

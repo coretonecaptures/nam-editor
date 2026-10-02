@@ -11,6 +11,7 @@ import { WavPreviewPlayer } from '../WavPreviewPlayer'
 import { IrProjectDefaultsModal } from './IrProjectDefaultsModal'
 import { IrBuildPackModal } from './IrBuildPackModal'
 import { describeIrLabAvailability, type IrLabStatus } from './irLabStatusMessage'
+import { publishModelsToIrLab } from './irLabPublishFlow'
 import type {
   NamProjectSummary,
   NamProjectDetail,
@@ -393,6 +394,13 @@ export interface CaptureRowActions {
   onReveal: (c: NamCaptureRow) => void
 }
 
+// Only the column keys are read when validating a persisted sort key; the actions are used inside
+// cell renders, which that check never runs.
+const noop = (): void => {}
+const NO_CAPTURE_ROW_ACTIONS: CaptureRowActions = {
+  onQueue: noop, onOpenModel: noop, onGoLive: noop, onRemoveJob: noop, onRetryJob: noop, onReveal: noop
+}
+
 export function buildCaptureColumns(queueJobs: TrainerQueueJob[], actions: CaptureRowActions): DataGridColumn<NamCaptureRow>[] {
   const findJob = (c: NamCaptureRow): TrainerQueueJob | undefined =>
     queueJobs.find((j) => j.namCaptureId === (c.captureId ?? c.itemId))
@@ -706,6 +714,13 @@ function ProjectHeader({
     const result = await window.api.irLibrarySendProjectToIrLab(detail.projectId)
     setHandoffStatus(result.success ? 'Opened in IR Lab.' : result.reason ?? 'Failed to open in IR Lab.')
   }, [detail.projectId])
+  const trainedModelPaths = detail.captures
+    .filter((c) => c.trained && c.modelFile != null && c.result?.outputModelPath)
+    .map((c) => c.result?.outputModelPath as string)
+  const publishTrained = useCallback(async () => {
+    setHandoffStatus(await publishModelsToIrLab(trainedModelPaths))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainedModelPaths.join('\n')])
 
   return (
     <div className="flex items-start gap-3 px-4 py-3 border-b border-nm-border flex-shrink-0">
@@ -748,6 +763,15 @@ function ProjectHeader({
           >
             Open in IR Lab
           </button>
+          {trainedModelPaths.length > 0 && (
+            <button
+              onClick={() => void publishTrained()}
+              title="Copy this project's trained models into IR Lab's NAM folder so Live Audition can load them"
+              className="text-[11px] text-nm-accent hover:underline"
+            >
+              Publish {trainedModelPaths.length} trained to IR Lab
+            </button>
+          )}
           <button onClick={onOpenProjectDefaults} className="text-[11px] text-nm-accent hover:underline">
             Set Project Defaults…
           </button>
@@ -1949,7 +1973,15 @@ function ModelFileLink({
           <button onClick={() => onReveal(result.outputModelPath)} className="text-nm-accent hover:underline">
             Reveal in folder
           </button>
+          <button
+            onClick={() => void publishModelsToIrLab([result.outputModelPath]).then(setErr)}
+            title="Copy this model into IR Lab's NAM folder and open it in Live Audition"
+            className="text-nm-accent hover:underline"
+          >
+            Publish to IR Lab
+          </button>
         </div>
+        {err && <span className="text-nm-text-3">{err}</span>}
       </div>
     )
   }
@@ -2393,7 +2425,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     const k = readStored(SORT_LS_KEY).split(':')[0]
     // Column keys are fixed regardless of queue state — an empty array is fine just to validate
     // the persisted key against the known set, before captureColumns (below) is memoized.
-    return buildCaptureColumns([]).some((c) => c.key === k) ? k : 'name'
+    return buildCaptureColumns([], NO_CAPTURE_ROW_ACTIONS).some((c) => c.key === k) ? k : 'name'
   })
   const [sortDir, setSortDir] = useState<SortDir>(() =>
     readStored(SORT_LS_KEY).split(':')[1] === 'desc' ? 'desc' : 'asc'

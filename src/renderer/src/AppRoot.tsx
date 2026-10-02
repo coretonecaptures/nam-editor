@@ -3,7 +3,7 @@ import App from './App'
 import { IrModeShell } from './components/ir/IrModeShell'
 import { NamProjectsShell } from './components/ir/NamProjectsShell'
 import { ModeRail, type AppMode } from './components/ModeRail'
-import { onGoToTrainingBatches, onGoToNamProject, goToNamProject, goToNamTrain } from './appNav'
+import { onGoToTrainingBatches, onGoToNamProject, goToNamProject, goToNamTrain, goToNamLibrary } from './appNav'
 
 const MODE_KEY = 'nam-lab-app-mode'
 
@@ -71,6 +71,19 @@ export default function AppRoot(): React.ReactElement {
     const unsubscribe = window.api.onNamLabOpenProject((projectId) => goToNamProject(projectId))
     window.api.getPendingNamLabProject().then((projectId) => {
       if (projectId) goToNamProject(projectId)
+    })
+    return unsubscribe
+  }, [])
+  // IR Lab's "Open NAM library in NAM Lab" -> namlab://library?path=... The main process has
+  // already checked the folder exists; App decides whether it's already the library or asks first.
+  useEffect(() => {
+    const open = (folderPath: string): void => {
+      setMode('nam')
+      goToNamLibrary(folderPath)
+    }
+    const unsubscribe = window.api.onNamLabOpenLibrary(open)
+    window.api.getPendingNamLabLibrary().then((folderPath) => {
+      if (folderPath) open(folderPath)
     })
     return unsubscribe
   }, [])

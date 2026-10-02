@@ -168,6 +168,12 @@ const api = {
     ipcRenderer.on('namlab:openProject', handler)
     return () => ipcRenderer.removeListener('namlab:openProject', handler)
   },
+  getPendingNamLabLibrary: (): Promise<string | null> => ipcRenderer.invoke('app:getPendingNamLabLibrary'),
+  onNamLabOpenLibrary: (cb: (folderPath: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, folderPath: string) => cb(folderPath)
+    ipcRenderer.on('namlab:openLibrary', handler)
+    return () => ipcRenderer.removeListener('namlab:openLibrary', handler)
+  },
   getPendingNamLabTrain: (): Promise<NamLabTrainIntent | null> => ipcRenderer.invoke('app:getPendingNamLabTrain'),
   onNamLabTrain: (cb: (intent: NamLabTrainIntent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, intent: NamLabTrainIntent) => cb(intent)
@@ -845,6 +851,10 @@ const api = {
     items: Array<{ path: string; name?: string }>,
     slot?: number
   ): Promise<{ success: boolean; reason?: string }> => ipcRenderer.invoke('irLibrary:sendNamGroupToIrLab', items, slot),
+  irLibraryPlanPublishToIrLab: (modelPaths: string[]): Promise<{ success: boolean; reason?: string; plan?: { namFolder: string; destFolder: string; entries: Array<{ source: string; dest: string; action: 'copy' | 'identical' | 'alreadyInLibrary' | 'conflict' | 'missing' }> } }> =>
+    ipcRenderer.invoke('irLibrary:planPublishToIrLab', modelPaths),
+  irLibraryPublishToIrLab: (modelPaths: string[], options: { keepBoth: boolean; open: boolean }): Promise<{ success: boolean; reason?: string }> =>
+    ipcRenderer.invoke('irLibrary:publishToIrLab', modelPaths, options),
   irLibraryListTags: (): Promise<Array<{ id: number; name: string; itemCount: number }>> =>
     ipcRenderer.invoke('irLibrary:listTags'),
   irLibraryGetOrCreateTag: (name: string): Promise<number> => ipcRenderer.invoke('irLibrary:getOrCreateTag', name),

@@ -50,6 +50,12 @@
   "build": {
     "appId": "com.coretonecaptures.namlab",
     "productName": "NAM Lab",
+    "protocols": [
+      {
+        "name": "NAM Lab",
+        "schemes": ["namlab"]
+      }
+    ],
     "directories": {
       "output": "release"
     },

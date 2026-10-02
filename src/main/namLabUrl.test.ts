@@ -18,6 +18,18 @@ describe('parseNamLabUrl', () => {
     expect(parseNamLabUrl('namlab://project')).toBeNull()
   })
 
+  it('parses a library link with an escaped absolute folder path', () => {
+    expect(parseNamLabUrl('namlab://library?path=%2FUsers%2Fme%2FNAM%20Profiles')).toEqual({
+      route: 'library',
+      path: '/Users/me/NAM Profiles'
+    })
+  })
+
+  it('rejects a library link with no path', () => {
+    expect(parseNamLabUrl('namlab://library')).toBeNull()
+    expect(parseNamLabUrl('namlab://library?path=')).toBeNull()
+  })
+
   it('returns null for malformed input rather than throwing', () => {
     expect(parseNamLabUrl('not a url')).toBeNull()
   })

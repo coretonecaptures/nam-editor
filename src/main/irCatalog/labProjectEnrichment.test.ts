@@ -150,12 +150,14 @@ describe.skipIf(!hasFts5())('enrichLabProjects', () => {
       .prepare(`SELECT field, source FROM ir_item_field_source WHERE item_id = ? ORDER BY field`)
       .all(item.id) as Array<{ field: string; source: string }>
     expect(sources.every((s) => s.source === 'ir_lab_native')).toBe(true)
-    // Every string field writeField() touches gets a confidence-ladder row, including the
-    // 2026-08-26 additions -- only the numeric mic_a_distance/mic_a_axis_angle_deg bypass it
-    // (written directly, since writeField's writer only handles strings).
+    // Every field the scan writes gets a confidence-ladder row -- strings via writeField(), notes
+    // too (it lives on `item`), and the numeric mic_a_distance/mic_a_axis_angle_deg via
+    // makeIrNumericFieldWriter -- so a user's own edit to any of them survives the next rescan.
     expect(sources.map((s) => s.field)).toEqual([
       'cabinet',
       'capture_type',
+      'mic_a_axis_angle_deg',
+      'mic_a_distance',
       'mic_a_distance_unit',
       'mic_a_notes',
       'mic_a_polar_pattern',
@@ -163,6 +165,7 @@ describe.skipIf(!hasFts5())('enrichLabProjects', () => {
       'mic_a_type',
       'microphone',
       'modeled_microphone',
+      'notes',
       'position',
       'preset_kind',
       'speaker',

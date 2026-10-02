@@ -10,6 +10,10 @@ export type NamLabUrl =
    * `&scope=untrained` for every capture NAM Lab's own result files say is untrained. Never
    * auto-runs anything — NAM Lab opens a review dialog first. */
   | { route: 'train'; projectId: string; captureIds: string[]; scope: 'selected' | 'untrained'; projectFolder: string | null }
+  /** IR Lab's "Open NAM library in NAM Lab": `namlab://library?path=<absolute folder>`. Opens NAM
+   * mode on that folder (asking first if it isn't already the library). Never scans or moves files
+   * on its own. */
+  | { route: 'library'; path: string }
 
 export function parseNamLabUrl(urlString: string): NamLabUrl | null {
   let url: URL
@@ -36,6 +40,10 @@ export function parseNamLabUrl(urlString: string): NamLabUrl | null {
     }
     if (captureIds.length === 0) return null
     return { route: 'train', projectId, captureIds, scope: 'selected', projectFolder }
+  }
+  if (route === 'library') {
+    const path = url.searchParams.get('path')
+    return path ? { route: 'library', path } : null
   }
   return null
 }
