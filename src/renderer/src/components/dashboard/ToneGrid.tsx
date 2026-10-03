@@ -62,7 +62,7 @@ export function toneGridCellKey(cell: ToneGridCell): string {
 }
 
 export const TONE_GRID_ROW_HEIGHT = 26
-const PAD = { t: 10, r: 16, b: 30, l: 132 }
+const PAD = { t: 10, r: 16, b: 34, l: 132 }
 
 /** Vertical space the axis and padding take, independent of how many rows there are. */
 export const TONE_GRID_CHROME_HEIGHT = PAD.t + PAD.b
@@ -132,7 +132,7 @@ export function ToneGrid({
   const dotRadius = toneGridDotRadius(rowHeight)
   // Row labels grow with their rows, but far more slowly than the dots — past ~13px they start
   // colliding with the fixed label gutter.
-  const labelFontSize = Math.min(Math.max(rowHeight * 0.4, 10.5), 13)
+  const labelFontSize = Math.min(Math.max(rowHeight * 0.42, 12), 14)
 
   // Heaviest at top: reverse the cleanest-first ordering for display only.
   const displayRows = React.useMemo(() => [...rows].reverse(), [rows])
@@ -341,7 +341,7 @@ export function ToneGrid({
             textAnchor="middle"
             fill="currentColor"
             opacity={0.45}
-            fontSize="9.5"
+            fontSize="11"
           >
             {tick.toFixed(2)}
           </text>
@@ -353,7 +353,7 @@ export function ToneGrid({
         textAnchor="middle"
         fill="currentColor"
         opacity={0.45}
-        fontSize="9.5"
+        fontSize="11"
       >
         {xLabel}
       </text>

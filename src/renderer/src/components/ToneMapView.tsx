@@ -76,7 +76,7 @@ const PLOT_BOTTOM_GUTTER = 104
  */
 export const MAX_ROW_HEIGHT = 220
 /** Share of the free vertical space the map takes by default; drag the grip for more. */
-const DEFAULT_HEIGHT_FRACTION = 0.5
+const DEFAULT_HEIGHT_FRACTION = 0.75
 /** How long the cursor must rest on a dot before it is rendered or played. */
 const HOVER_SETTLE_MS = 160
 
@@ -102,10 +102,10 @@ const GEAR_UNTAGGED = 'untagged'
 /**
  * Row height that fills half the free vertical space, bounded both ways.
  *
- * Half rather than all of it: filling the window made a six-amp library look like the whole app
- * was one chart, with nothing left on screen below. The lower clamp is what makes "unless there
- * are a lot of amps" fall out on its own — once there are enough rows that half the space can't
- * give each 26px, the height stops shrinking and the plot grows past half and scrolls instead.
+ * Three quarters rather than all of it keeps the map as the visual focus while leaving its legend
+ * and controls in view below. The lower clamp is what makes "unless there are a lot of amps" fall
+ * out on its own — once there are enough rows that 75% of the space can't
+ * give each 26px, the height stops shrinking and the plot grows beyond that target and scrolls.
  */
 export function autoRowHeightFor(rowCount: number, availableHeight: number): number {
   if (rowCount <= 0 || availableHeight <= 0) return TONE_GRID_ROW_HEIGHT
@@ -136,7 +136,7 @@ function Chip({
   tone?: 'default' | 'accent'
 }) {
   const base =
-    'h-6 px-2 rounded-full text-[11px] font-medium whitespace-nowrap transition-colors flex-shrink-0'
+    'h-7 px-2.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors flex-shrink-0'
   const style = active
     ? 'bg-teal-500 text-white'
     : tone === 'accent'
@@ -180,13 +180,13 @@ function Facet({
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.07em] text-gray-400 dark:text-gray-500">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-gray-400 dark:text-gray-500">
           {title}
         </span>
         {selected.size > 0 && (
           <button
             onClick={onClear}
-            className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline"
+            className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline"
           >
             clear
           </button>
@@ -198,7 +198,7 @@ function Facet({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter…"
-          className="w-full h-6 px-2 rounded text-[11px] bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:border-teal-500"
+          className="w-full h-7 px-2 rounded text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:border-teal-500"
         />
       )}
 
@@ -219,7 +219,7 @@ function Facet({
                 }`}
               />
               <span
-                className={`flex-1 min-w-0 truncate text-[11px] ${
+                className={`flex-1 min-w-0 truncate text-xs ${
                   isOn
                     ? 'text-teal-700 dark:text-teal-300 font-medium'
                     : 'text-gray-600 dark:text-gray-300'
@@ -228,7 +228,7 @@ function Facet({
               >
                 {option.label}
               </span>
-              <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-600 flex-shrink-0">
+              <span className="font-mono tabular-nums text-[11px] text-gray-400 dark:text-gray-600 flex-shrink-0">
                 {option.count}
               </span>
             </button>
@@ -239,7 +239,7 @@ function Facet({
       {matching.length > initialVisible && (
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="text-[10px] text-gray-500 dark:text-gray-400 hover:underline"
+          className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline"
         >
           {expanded ? 'Show fewer' : `${matching.length - initialVisible} more…`}
         </button>
@@ -374,22 +374,37 @@ export function ToneMapView({
    * seconds to sound, or appeared not to play at all.
    */
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** The capture currently under the pointer, including while its settle timer is pending. */
+  const hoverTargetPathRef = useRef<string | null>(null)
+
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+    hoverTimerRef.current = null
+  }, [])
+
   useEffect(() => {
     return () => {
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+      clearHoverTimer()
     }
-  }, [])
+  }, [clearHoverTimer])
+
+  // Do not leave a delayed hover request alive after the interaction mode changes.
+  useEffect(() => {
+    clearHoverTimer()
+    hoverTargetPathRef.current = null
+  }, [dotAction, clearHoverTimer])
 
   // Escape stops whatever is sounding, wherever focus happens to be.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+      clearHoverTimer()
+      hoverTargetPathRef.current = null
       audition.stop()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [audition])
+  }, [audition, clearHoverTimer])
   const baseFiles = scope === 'library' || !canScopeToFolder ? files : scopedFiles
 
   /** Captures that report a measured gain — the only ones the map can position. */
@@ -542,6 +557,45 @@ export function ToneMapView({
     for (const f of filtered) map.set(f.filePath, f)
     return map
   }, [filtered])
+
+  /**
+   * Keep a pending hover alive while the pointer remains on the same capture.
+   *
+   * Mousemove fires repeatedly even when a hand is resting on the mouse, and the old handler
+   * restarted the 160 ms timer each time. That made hover playback depend on the pointer being
+   * perfectly still. Only a change of capture should restart the settle delay.
+   */
+  const handleHoverChange = useCallback(
+    (mark: ToneGridMark | null, x: number, y: number, cell?: ToneGridCell | null) => {
+      setHover(mark ? { mark, x, y } : null)
+      setHoverCell(cell ? { cell, x, y } : null)
+      if (dotAction === 'open') return
+
+      const nextPath = mark?.id ?? null
+      if (nextPath === hoverTargetPathRef.current) return
+
+      clearHoverTimer()
+      hoverTargetPathRef.current = nextPath
+      if (!mark) {
+        // Moving off a dot ends a hover audition, but never interrupts click-to-hear playback.
+        if (dotAction === 'hover') audition.stop()
+        return
+      }
+
+      const file = byPath.get(mark.id)
+      if (!file) return
+      if (dotAction === 'hover' && audition.playingPath === file.filePath) return
+
+      hoverTimerRef.current = setTimeout(() => {
+        hoverTimerRef.current = null
+        // The pointer may have moved while this task waited in the event loop.
+        if (hoverTargetPathRef.current !== file.filePath) return
+        if (dotAction === 'hover') audition.play(file)
+        else audition.prefetch([file])
+      }, HOVER_SETTLE_MS)
+    },
+    [audition, byPath, clearHoverTimer, dotAction]
+  )
 
   const makeOptions = useMemo(() => {
     const ranked = rankAmpsByHeaviness(positionable)
@@ -806,10 +860,12 @@ export function ToneMapView({
   )
 
   const dragRef = useRef<{ clientX: number; moved: boolean } | null>(null)
+  const suppressPlotClickRef = useRef(false)
 
   const handlePanStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     // Only drag-pan while zoomed; otherwise there is nowhere to go and it would just swallow
     // clicks meant for the marks.
+    suppressPlotClickRef.current = false
     dragRef.current = { clientX: event.clientX, moved: false }
   }, [])
 
@@ -831,7 +887,22 @@ export function ToneMapView({
   )
 
   const handlePanEnd = useCallback(() => {
+    // A click is dispatched after mouseup. Consume it when the pointer actually panned so a drag
+    // cannot also select the mark now sitting beneath the pointer.
+    suppressPlotClickRef.current = dragRef.current?.moved ?? false
     dragRef.current = null
+  }, [])
+
+  const handlePanCancel = useCallback(() => {
+    dragRef.current = null
+    suppressPlotClickRef.current = false
+  }, [])
+
+  const handlePlotClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!suppressPlotClickRef.current) return
+    suppressPlotClickRef.current = false
+    event.preventDefault()
+    event.stopPropagation()
   }, [])
 
   // Measured from the plot's own top, so it stays correct however tall the header, facet rail and
@@ -848,7 +919,7 @@ export function ToneMapView({
     return () => window.removeEventListener('resize', measure)
     // Re-measure whenever chrome above the plot could have reflowed: a different row count, a
     // width change, or the zoom breadcrumb appearing.
-  }, [rows.length, plotWidth, zoom])
+  }, [rows.length, plotWidth, zoom, view, nowPlaying?.filePath, hasNarrowing, listening, irPath])
 
   // Rows follow the window (see autoRowHeightFor) until the grip pins an explicit height. The
   // dots grow with them via toneGridDotRadius, so a taller row isn't the same specks spread out.
@@ -901,10 +972,10 @@ export function ToneMapView({
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex-shrink-0">
         <div className="min-w-0">
-          <div className="text-xs font-medium text-teal-500 dark:text-teal-400 uppercase tracking-wide">
+          <div className="text-sm font-medium text-teal-500 dark:text-teal-400 uppercase tracking-wide">
             Tone Map
           </div>
-          <div className="text-[11px] text-gray-500 dark:text-gray-400">
+          <div className="text-xs text-gray-500 dark:text-gray-400">
             {marks.length.toLocaleString()} of {positionable.length.toLocaleString()} shown
             {excludedCount > 0 && (
               <span className="text-amber-600 dark:text-amber-500">
@@ -923,7 +994,7 @@ export function ToneMapView({
             <button
               key={value}
               onClick={() => setView(value)}
-              className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
+              className={`h-7 px-3 rounded-md text-xs font-medium transition-colors ${
                 view === value
                   ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -953,7 +1024,7 @@ export function ToneMapView({
                 }}
                 disabled={value !== 'open' && !diPath}
                 title={!diPath && value !== 'open' ? 'Set a DI clip in the player first' : hint}
-                className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                className={`h-7 px-3 rounded-md text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                   dotAction === value
                     ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -973,7 +1044,7 @@ export function ToneMapView({
                 ? 'Latched — a capture keeps playing after you let go'
                 : 'Hold to listen — audio stops when you release'
             }
-            className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors flex-shrink-0 ${
+            className={`h-7 px-3 rounded-md text-xs font-medium transition-colors flex-shrink-0 ${
               latched
                 ? 'text-[#06201d] bg-[var(--accent)]'
                 : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800'
@@ -991,7 +1062,7 @@ export function ToneMapView({
               <button
                 key={value}
                 onClick={() => setScope(value)}
-                className={`h-6 px-2.5 rounded-md text-[11px] font-medium transition-colors ${
+                className={`h-7 px-3 rounded-md text-xs font-medium transition-colors ${
                   scope === value
                     ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
@@ -1013,7 +1084,7 @@ export function ToneMapView({
         {hasNarrowing && (
           <button
             onClick={resetAll}
-            className="h-7 px-2.5 rounded-md text-[11px] font-medium border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
+            className="h-8 px-3 rounded-md text-xs font-medium border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-shrink-0"
             title="Clear all narrowing and zoom back out"
           >
             Zoom out
@@ -1036,14 +1107,14 @@ export function ToneMapView({
       {/* Now playing + drill-down offers */}
       {nowPlaying && (
         <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex-shrink-0 overflow-x-auto">
-          <span className="text-[10px] uppercase tracking-wide text-teal-500 dark:text-teal-400 flex-shrink-0">
+          <span className="text-[11px] uppercase tracking-wide text-teal-500 dark:text-teal-400 flex-shrink-0">
             Now playing
           </span>
           <span className="text-xs font-medium truncate max-w-[22rem] flex-shrink-0" title={captureLabel(nowPlaying)}>
             {captureLabel(nowPlaying)}
           </span>
 
-          <span className="text-[10px] text-gray-400 dark:text-gray-600 flex-shrink-0 ml-1">
+          <span className="text-[11px] text-gray-400 dark:text-gray-600 flex-shrink-0 ml-1">
             Narrow to
           </span>
           {drillMake && nowPlayingMakeKey && (
@@ -1103,7 +1174,7 @@ export function ToneMapView({
       {/* Active narrowing breadcrumb */}
       {hasNarrowing && (
         <div className="flex items-center gap-1.5 px-4 py-1.5 border-b border-gray-200 dark:border-gray-800 flex-shrink-0 overflow-x-auto">
-          <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 flex-shrink-0">
+          <span className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500 flex-shrink-0">
             Showing
           </span>
           {expandedMake !== null && (
@@ -1175,7 +1246,7 @@ export function ToneMapView({
               onChange={(e) => setShowUntagged(e.target.checked)}
               className="w-3 h-3 rounded accent-teal-500"
             />
-            <span className="text-[11px] text-gray-600 dark:text-gray-300">
+            <span className="text-xs text-gray-600 dark:text-gray-300">
               Show untagged amps
             </span>
           </label>
@@ -1186,7 +1257,7 @@ export function ToneMapView({
               onChange={(e) => setShowUntaggedTone(e.target.checked)}
               className="w-3 h-3 rounded accent-teal-500"
             />
-            <span className="text-[11px] text-gray-600 dark:text-gray-300">
+            <span className="text-xs text-gray-600 dark:text-gray-300">
               Show captures with no tone type
               {untaggedToneCount > 0 && (
                 <span className="text-gray-400 dark:text-gray-500"> ({untaggedToneCount.toLocaleString()})</span>
@@ -1203,11 +1274,11 @@ export function ToneMapView({
               mode WILL use, and the cab warning is the main way the gear-type mismatch surfaces. */}
           {(diCategories.length > 0 || !!irLibraryPath) && (
             <div
-              className={`flex items-center gap-3 px-4 pt-3 text-[11px] flex-wrap ${
+              className={`flex items-center gap-3 px-4 pt-3 text-xs flex-wrap ${
                 listening ? '' : 'opacity-70'
               }`}
             >
-              <span className="text-[9px] font-semibold uppercase tracking-[.14em] text-gray-400 dark:text-gray-500">
+              <span className="text-[11px] font-semibold uppercase tracking-[.12em] text-gray-400 dark:text-gray-500">
                 {listening ? 'Listening through' : 'Will listen through'}
               </span>
 
@@ -1221,7 +1292,7 @@ export function ToneMapView({
                     audition.stop()
                   }}
                   title="Stop (Esc) — or click the same capture again"
-                  className="h-6 px-2 rounded-full text-[10px] font-semibold bg-[var(--accent)] text-[#06201d] hover:opacity-90 flex items-center gap-1.5"
+                  className="h-7 px-2.5 rounded-full text-xs font-semibold bg-[var(--accent)] text-[#06201d] hover:opacity-90 flex items-center gap-1.5"
                 >
                   <span className="w-1.5 h-1.5 rounded-sm bg-[#06201d]" />
                   Stop
@@ -1284,7 +1355,7 @@ export function ToneMapView({
                   skipped for the other. Offer the split as one click rather than leaving the user
                   to find the Gear type facet and work out which values mean what. */}
               {cabSplit.needs > 0 && cabSplit.has > 0 && (
-                <span className="flex items-center gap-1.5 text-[10px] text-amber-600 dark:text-amber-500">
+                <span className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-500">
                   mixed gear — not comparable:
                   <button
                     onClick={() => setGearKeys(new Set(cabSplit.needsKeys))}
@@ -1306,7 +1377,7 @@ export function ToneMapView({
               {/* Which way round the cab applies for THIS scope, so the picker never looks broken. */}
               {cabSplit.total > 0 && (
                 <span
-                  className={`text-[10px] ${
+                  className={`text-xs ${
                     irPath && cabSplit.needs === 0
                       ? 'text-amber-600 dark:text-amber-500'
                       : 'text-gray-400 dark:text-gray-500'
@@ -1323,11 +1394,11 @@ export function ToneMapView({
                           : 'no cab needed — every capture in scope has one'}
                 </span>
               )}
-              <span className="text-[10px] text-gray-400 dark:text-gray-500">
+              <span className="text-xs text-gray-400 dark:text-gray-500">
                 same settings as the player
               </span>
               {audition.error && (
-                <span className="text-[10px] text-red-500">{audition.error}</span>
+                <span className="text-xs text-red-500">{audition.error}</span>
               )}
             </div>
           )}
@@ -1356,7 +1427,8 @@ export function ToneMapView({
               onMouseDown={handlePanStart}
               onMouseMove={handlePanMove}
               onMouseUp={handlePanEnd}
-              onMouseLeave={handlePanEnd}
+              onMouseLeave={handlePanCancel}
+              onClickCapture={handlePlotClickCapture}
               className={`relative rounded-xl overflow-hidden border border-gray-200 dark:border-gray-800 ${
                 zoom !== null ? 'cursor-grab active:cursor-grabbing' : ''
               }`}
@@ -1377,27 +1449,7 @@ export function ToneMapView({
                 selectedId={nowPlaying?.filePath ?? null}
                 hoveredId={hover?.mark.id ?? null}
                 hoveredCellKey={hoverCell ? toneGridCellKey(hoverCell.cell) : null}
-                onHoverChange={(mark, x, y, cell) => {
-                  setHover(mark ? { mark, x, y } : null)
-                  setHoverCell(cell ? { cell, x, y } : null)
-                  if (dotAction === 'open') return
-                  if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
-                  if (!mark) {
-                    // Moving off the dots ends the sweep, so hover reads as scrubbing rather
-                    // than as latching whatever you happened to pass over last.
-                    if (dotAction === 'hover') audition.stop()
-                    return
-                  }
-                  const file = byPath.get(mark.id)
-                  if (!file) return
-                  if (dotAction === 'hover' && audition.playingPath === file.filePath) return
-                  // Only act once the cursor has settled. Warming on the way past would fill the
-                  // pool with captures the user is merely travelling over.
-                  hoverTimerRef.current = setTimeout(() => {
-                    if (dotAction === 'hover') audition.play(file)
-                    else audition.prefetch([file])
-                  }, HOVER_SETTLE_MS)
-                }}
+                onHoverChange={handleHoverChange}
                 onSelect={handleSelect}
                 onDrillCell={handleDrillCell}
                 onSelectRow={handleSelectRow}
@@ -1422,7 +1474,7 @@ export function ToneMapView({
               {rowHeightOverride !== null && (
                 <button
                   onClick={() => setRowHeightOverride(null)}
-                  className="text-[10px] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100"
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100"
                   title="Go back to filling the window automatically"
                 >
                   auto height
@@ -1439,7 +1491,7 @@ export function ToneMapView({
               <button
                 onClick={() => setZoom(null)}
                 title="Zoom out to the full range"
-                className="h-6 px-2 rounded text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 flex-shrink-0"
+                className="h-7 px-2.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 flex-shrink-0"
               >
                 Fit
               </button>
@@ -1477,23 +1529,23 @@ export function ToneMapView({
                 />
               </div>
 
-              <span className="font-mono tabular-nums text-[10px] text-gray-400 dark:text-gray-500 w-12 text-right flex-shrink-0">
+              <span className="font-mono tabular-nums text-xs text-gray-400 dark:text-gray-500 w-12 text-right flex-shrink-0">
                 {zoomFactor.toFixed(1)}×
               </span>
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
             {toneOptions.map((option) => (
               <span key={option.key} className="inline-flex items-center gap-1.5">
                 <span
-                  className="w-2 h-2 rounded-sm"
+                  className="w-2.5 h-2.5 rounded-sm"
                   style={{ backgroundColor: toneColor(option.key) }}
                 />
-                <span className="text-[10px] text-gray-500 dark:text-gray-400">{option.label}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">{option.label}</span>
               </span>
             ))}
-            <span className="text-[10px] text-gray-400 dark:text-gray-600 ml-2">
+            <span className="text-xs text-gray-400 dark:text-gray-600 ml-2">
               rows marked * have under 3 measured captures · click a heat band to zoom into it,
               scroll to zoom anywhere, drag to pan
             </span>
@@ -1512,7 +1564,7 @@ export function ToneMapView({
           }}
         >
           <div className="font-medium truncate">{hover.mark.label}</div>
-          <div className="text-[10px] text-gray-300 dark:text-gray-400">
+          <div className="text-[11px] text-gray-300 dark:text-gray-400">
             saturation {hover.mark.x.toFixed(2)} · click to play
           </div>
         </div>
@@ -1531,7 +1583,7 @@ export function ToneMapView({
           <div className="font-medium">
             {hoverCell.cell.count} capture{hoverCell.cell.count === 1 ? '' : 's'}
           </div>
-          <div className="text-[10px] text-gray-300 dark:text-gray-400">
+          <div className="text-[11px] text-gray-300 dark:text-gray-400">
             saturation {hoverCell.cell.xMin.toFixed(2)}–{hoverCell.cell.xMax.toFixed(2)} ·{' '}
             {hoverCell.cell.count === 1 ? 'click to play' : 'click to zoom in'}
           </div>

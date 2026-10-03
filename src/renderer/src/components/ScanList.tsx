@@ -98,7 +98,7 @@ export function ScanList({
 
   return (
     <div ref={rootRef} className="h-full flex flex-col">
-      <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+      <div className="flex items-center gap-3 px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
         <span>
           <strong className="text-gray-700 dark:text-gray-200">{ordered.length.toLocaleString()}</strong> in scope
         </span>
@@ -111,7 +111,7 @@ export function ScanList({
           game — "4x12 · V30" and "SM57, R121" are not self-describing at a glance. */}
       {columns.length > 0 && (
         <div
-          className="grid items-center gap-2 pl-[22px] pr-3 py-1 text-[9px] uppercase tracking-[.12em] text-gray-400 dark:text-gray-600 border-b border-gray-200 dark:border-gray-800"
+          className="grid items-center gap-2 pl-[22px] pr-3 py-1.5 text-[11px] uppercase tracking-[.1em] text-gray-400 dark:text-gray-600 border-b border-gray-200 dark:border-gray-800"
           style={{ gridTemplateColumns: gridTemplate }}
         >
           <span>Capture</span>
@@ -142,7 +142,7 @@ export function ScanList({
             }}
             onDoubleClick={() => onOpenInPlayer(file)}
             title="Press and hold to listen · double-click to open in the player"
-            className={`flex items-center gap-2 h-[34px] px-3 cursor-pointer select-none border-b border-gray-100 dark:border-gray-800 transition-colors ${
+            className={`flex items-center gap-2 h-[38px] px-3 cursor-pointer select-none border-b border-gray-100 dark:border-gray-800 transition-colors ${
               isPlaying ? 'bg-[var(--active)]' : 'hover:bg-gray-50 dark:hover:bg-gray-900'
             }`}
             style={isPlaying ? { boxShadow: 'inset 3px 0 0 var(--accent)' } : undefined}
@@ -154,10 +154,10 @@ export function ScanList({
               title={isReady ? 'Rendered and ready' : 'Not rendered yet'}
             />
             <div className="flex-1 min-w-0 grid items-center gap-2" style={{ gridTemplateColumns: gridTemplate }}>
-              <span className="truncate text-[12px] text-gray-700 dark:text-gray-200 flex items-center gap-1.5">
+              <span className="truncate text-[13px] text-gray-700 dark:text-gray-200 flex items-center gap-1.5">
                 <span className="truncate">{file.metadata.name || file.fileName}</span>
                 {nowPlayingPath === file.filePath && (
-                  <span className="flex-none text-[9px] font-mono text-[var(--accent)]">in player</span>
+                  <span className="flex-none text-[11px] font-mono text-[var(--accent)]">in player</span>
                 )}
               </span>
               {columns.map((id) => (
@@ -185,7 +185,7 @@ function ScanCell({ id, file }: { id: ScanColumnId; file: NamFile }): React.JSX.
     const tone = getEsrTone(best.value, best.kind, 4)
     return (
       <span
-        className={`truncate text-right text-[10px] font-mono ${tone.classes}`}
+        className={`truncate text-right text-[11px] font-mono ${tone.classes}`}
         title={best.value === null ? 'No validation ESR' : `${best.label}: ${best.value}`}
       >
         {tone.text}
@@ -198,7 +198,7 @@ function ScanCell({ id, file }: { id: ScanColumnId; file: NamFile }): React.JSX.
   // reads as a row of columns instead of drifting text.
   return (
     <span
-      className={`truncate text-[10.5px] ${value ? 'text-gray-500 dark:text-gray-400' : 'text-gray-300 dark:text-gray-700'}`}
+      className={`truncate text-xs ${value ? 'text-gray-500 dark:text-gray-400' : 'text-gray-300 dark:text-gray-700'}`}
       title={value || undefined}
     >
       {value || '—'}

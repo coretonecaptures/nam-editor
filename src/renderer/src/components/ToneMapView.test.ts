@@ -210,8 +210,8 @@ describe('ToneMapView zoom', () => {
 })
 
 /**
- * Vertical sizing policy. The map fills half the free space so a small library doesn't read as
- * "the whole app is one chart" — and past a certain row count it stops shrinking and grows
+ * Vertical sizing policy. The map fills three quarters of the free space, and past a certain row
+ * count it stops shrinking and grows
  * instead, which is what "unless there are a lot of amps" means in practice.
  */
 describe('autoRowHeightFor', () => {
@@ -225,16 +225,16 @@ describe('autoRowHeightFor', () => {
     expect(autoRowHeightFor(4, TALL)).toBeGreaterThan(MIN)
   })
 
-  it('uses about half the free space, not all of it', () => {
+  it('uses about three quarters of the free space, not all of it', () => {
     const rows = 6
     const used = autoRowHeightFor(rows, TALL) * rows
-    expect(used).toBeLessThanOrEqual(TALL * 0.5)
+    expect(used).toBeLessThanOrEqual(TALL * 0.75)
     // ...and is actually using that space rather than defaulting small.
-    expect(used).toBeGreaterThan(TALL * 0.3)
+    expect(used).toBeGreaterThan(TALL * 0.55)
   })
 
   it('stops shrinking once there are a lot of amps, so the plot grows and scrolls', () => {
-    // 40 rows cannot fit in half the window at the minimum height; height must clamp, not shrink.
+    // 40 rows cannot fit in three quarters of the window at the minimum height; height must clamp.
     expect(autoRowHeightFor(40, TALL)).toBe(MIN)
     expect(autoRowHeightFor(200, TALL)).toBe(MIN)
   })
