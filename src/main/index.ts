@@ -12,6 +12,8 @@ import { writeNamLabResult } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, findModelNameConflicts, sanitizeTrainerPathPart, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
 import { parseNamLabUrl } from './namLabUrl'
+import { parseHandoffOp, writeHandoffReceipt } from './handoffReceipt'
+import { irLabAppDataDir } from './irLabStatus'
 import type { NamLabTrainIntent } from '../shared/namProjects'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
@@ -25,8 +27,15 @@ let pendingNamLabTrain: NamLabTrainIntent | null = null
 let pendingNamLabLibrary: string | null = null
 
 function handleNamLabUrl(urlString: string): void {
+  const op = parseHandoffOp(urlString)
+  const receipt = (route: string, ok: boolean, message: string): void => {
+    if (op) writeHandoffReceipt(irLabAppDataDir(), { op, route, ok, message, receivedAt: new Date().toISOString() })
+  }
   const parsed = parseNamLabUrl(urlString)
-  if (!parsed) return
+  if (!parsed) {
+    receipt('unknown', false, 'NAM Lab did not recognise the link IR Lab sent -- update NAM Lab.')
+    return
+  }
   const live = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
   if (live) {
     if (live.isMinimized()) live.restore()
@@ -35,6 +44,7 @@ function handleNamLabUrl(urlString: string): void {
   if (parsed.route === 'project') {
     if (live) live.webContents.send('namlab:openProject', parsed.id)
     else pendingNamLabProjectId = parsed.id
+    receipt('project', true, 'received')
     return
   }
   if (parsed.route === 'library') {
@@ -47,6 +57,7 @@ function handleNamLabUrl(urlString: string): void {
       isDirectory = false
     }
     if (!isDirectory) {
+      receipt('library', false, `The NAM library folder does not exist: ${parsed.path}`)
       const options = {
         type: 'warning' as const,
         title: 'NAM Lab',
@@ -59,6 +70,7 @@ function handleNamLabUrl(urlString: string): void {
     }
     if (live) live.webContents.send('namlab:openLibrary', parsed.path)
     else pendingNamLabLibrary = parsed.path
+    receipt('library', true, 'received')
     return
   }
   const intent: NamLabTrainIntent = {
@@ -69,6 +81,7 @@ function handleNamLabUrl(urlString: string): void {
   }
   if (live) live.webContents.send('namlab:train', intent)
   else pendingNamLabTrain = intent
+  receipt('train', true, 'received')
 }
 
 // Electron's own documented dev-mode pattern: a packaged build can just register the app itself;

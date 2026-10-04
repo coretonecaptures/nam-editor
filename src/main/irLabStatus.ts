@@ -14,6 +14,7 @@
 import { app } from 'electron'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 export type IrLabLicenseState = 'licensed' | 'unlicensed' | 'unknown'
 
@@ -40,8 +41,17 @@ export function irLabSupportsRoute(status: IrLabStatus, route: string): boolean 
 
 const UNKNOWN_STATUS: IrLabStatus = { installed: false, version: null, licenseState: 'unknown', trialDaysRemaining: null, routes: null }
 
+/** IR Lab's per-user data folder. IR Lab resolves it with JUCE's userApplicationDataDirectory,
+ * which is ~/Library on macOS -- NOT Electron's appData (~/Library/Application Support), so
+ * reading under appData there never found IR Lab's file. On Windows both are %APPDATA%. */
+export function irLabAppDataDir(): string {
+  return process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'IR Lab')
+    : join(app.getPath('appData'), 'IR Lab')
+}
+
 export function irLabStatusFile(): string {
-  return join(app.getPath('appData'), 'IR Lab', 'integration-status.json')
+  return join(irLabAppDataDir(), 'integration-status.json')
 }
 
 /** Pure — takes the file's already-read text so it's unit-testable without a real filesystem. */
