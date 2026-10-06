@@ -35,6 +35,19 @@ export function resolveTrainIntentCaptures(
   return { captures: found, missingIds }
 }
 
+/**
+ * Where trained models go when the user has never chosen a folder (a fresh install, or the first
+ * hand-off): a "Trained Models" folder inside the IR Lab project, created when training starts.
+ * Without a default both buttons below stayed disabled on a first run, with nothing saying why.
+ */
+export function defaultTrainedModelsFolder(projectFolder: string | null, namCapturesDir: string | null): string {
+  const fromCaptures = namCapturesDir ? namCapturesDir.replace(/[\\/]+[^\\/]*[\\/]*$/, '') : ''
+  const base = (projectFolder?.trim() || fromCaptures).replace(/[\\/]+$/, '')
+  if (!base) return ''
+  const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/'
+  return `${base}${sep}Trained Models`
+}
+
 export function hasTrainingFiles(c: NamCaptureRow): boolean {
   return !!c.excitationPath && !!c.recordingPath
 }
@@ -138,6 +151,10 @@ export function TrainFromIrLabModal({
         </div>
 
         <div className="px-4 py-3 flex flex-col gap-2 overflow-y-auto min-h-0">
+          <p className="text-[11px] text-nm-text-3">
+            Pick what to train. <span className="text-nm-text-2">Train now</span> starts straight away and opens the Queue;{' '}
+            <span className="text-nm-text-2">Add to batch</span> holds the job on the Batches page until you press Start.
+          </p>
           {flaggedCount > 0 && (
             <p className="text-[11px] text-amber-400">
               Flagged captures are unticked. Tick one only if you really want to retrain it — the new model is saved
@@ -197,7 +214,8 @@ export function TrainFromIrLabModal({
 
         <div className="px-4 py-2 border-t border-nm-border-s flex items-center gap-2 text-[11px] text-nm-text-3">
           <span className="truncate">
-            {architectureLabel} · {epochs} epochs · {outputRoot ? <span title={outputRoot}>{fileName(outputRoot)}</span> : 'no output folder'}
+            {architectureLabel} · {epochs} epochs · saves to{' '}
+            {outputRoot ? <span title={outputRoot}>{fileName(outputRoot)}</span> : <span className="text-amber-400">no folder yet</span>}
           </span>
           <button onClick={onChooseOutput} disabled={busy} className="ml-auto shrink-0 text-nm-accent hover:underline disabled:opacity-50">
             {outputRoot ? 'Change folder…' : 'Choose output folder…'}
@@ -211,17 +229,17 @@ export function TrainFromIrLabModal({
           <button
             onClick={() => onSubmit(selected, 'stage')}
             disabled={busy || checking || !outputRoot || selected.length === 0}
-            title="Adds them to the Batches page, waiting for Start"
+            title={!outputRoot ? 'Choose a folder for the trained models first' : 'Adds them to the Batches page, waiting for Start'}
             className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text hover:bg-hov disabled:opacity-50"
           >
-            Stage {selected.length || ''}
+            Add to batch
           </button>
           <button
             onClick={() => onSubmit(selected, 'runNext')}
             disabled={busy || checking || !outputRoot || selected.length === 0}
             className="px-3 py-1.5 text-xs rounded bg-nm-accent text-accent-fg hover:opacity-90 disabled:opacity-50"
           >
-            {busy ? 'Queueing…' : `Train ${selected.length || ''} next`}
+            {busy ? 'Queueing…' : checking ? 'Checking…' : `Train ${selected.length || ''} now`}
           </button>
         </div>
       </div>

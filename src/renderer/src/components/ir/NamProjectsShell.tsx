@@ -22,7 +22,12 @@ import type {
 } from '../../types/namProjects'
 import type { TrainerHistoryEntry, TrainerQueueJob } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav, consumePendingNamTrainNav, onNamProjectsIntent } from '../../appNav'
-import { TrainFromIrLabModal, resolveTrainIntentCaptures, type TrainReviewRequest } from './TrainFromIrLabModal'
+import {
+  TrainFromIrLabModal,
+  defaultTrainedModelsFolder,
+  resolveTrainIntentCaptures,
+  type TrainReviewRequest
+} from './TrainFromIrLabModal'
 import { SettingsPanel } from '../SettingsPanel'
 import { IrHelpModal } from './IrHelpModal'
 import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
@@ -2578,7 +2583,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           return
         }
         setSelectedId(project.collectionId)
-        setView('overview')
+        // The project's own captures, not the library Overview dashboard (all statistics, nothing to act on).
+        setView('projects')
         // Rescan this project's root first: IR Lab may have captured (or NAM Lab may have trained)
         // since the last scan, and both the capture list and trained flags must be current here.
         const root = (await window.api.irLibraryListRoots()).find((r) => r.id === project.libraryRootId)
@@ -2589,6 +2595,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           return
         }
         setDetail(d)
+        // First run: no model folder yet. Default to "Trained Models" in the IR Lab project so the
+        // review's buttons are live; the user can still change it there.
+        setOutputRoot((current) => current || defaultTrainedModelsFolder(intent.projectFolder, d.namCapturesDir))
         const resolved = resolveTrainIntentCaptures(intent, d.captures)
         setTrainReview({ projectName: d.name, captures: resolved.captures, missingIds: resolved.missingIds })
       } catch (err) {

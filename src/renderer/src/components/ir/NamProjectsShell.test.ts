@@ -9,7 +9,7 @@ import {
   type FacetState
 } from './NamProjectsShell'
 import type { NamCaptureRow } from '../../types/namProjects'
-import { resolveTrainIntentCaptures, defaultTicked } from './TrainFromIrLabModal'
+import { resolveTrainIntentCaptures, defaultTicked, defaultTrainedModelsFolder } from './TrainFromIrLabModal'
 import type { TrainerQueueJob } from '../../types/trainer'
 
 /** Top-10 NAM Projects to-do item: "pure helpers already extractable and untested" (TODO.md ->
@@ -335,5 +335,22 @@ describe('Train from IR Lab — capture resolution and default ticks', () => {
     expect(defaultTicked(a, conflict)).toBe(false) // name looks trained before
     expect(defaultTicked(b, undefined)).toBe(false) // result file says trained
     expect(defaultTicked(c, undefined)).toBe(false) // no WAVs
+  })
+})
+
+describe('defaultTrainedModelsFolder (first-run model folder for the IR Lab train hand-off)', () => {
+  it('uses a "Trained Models" folder inside the IR Lab project', () => {
+    expect(defaultTrainedModelsFolder('/projects/NAM/Amp Test', null)).toBe('/projects/NAM/Amp Test/Trained Models')
+    expect(defaultTrainedModelsFolder('/projects/NAM/Amp Test/', null)).toBe('/projects/NAM/Amp Test/Trained Models')
+  })
+  it('keeps Windows separators', () => {
+    expect(defaultTrainedModelsFolder('D:\\Projects\\NAM\\Amp Test', null)).toBe('D:\\Projects\\NAM\\Amp Test\\Trained Models')
+  })
+  it('falls back to the folder above the project\'s NAM Captures directory', () => {
+    expect(defaultTrainedModelsFolder(null, '/projects/NAM/Amp Test/NAM Captures')).toBe('/projects/NAM/Amp Test/Trained Models')
+    expect(defaultTrainedModelsFolder('  ', '/projects/NAM/Amp Test/NAM Captures/')).toBe('/projects/NAM/Amp Test/Trained Models')
+  })
+  it('gives up (empty) when neither is known, so the buttons wait for a chosen folder', () => {
+    expect(defaultTrainedModelsFolder(null, null)).toBe('')
   })
 })
