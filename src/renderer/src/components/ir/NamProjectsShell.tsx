@@ -2480,13 +2480,20 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       return 1000
     }
   })
-  const [outputRoot, setOutputRoot] = useState<string>(() => {
+  // The folder the user explicitly chose ('' until they do). Training never needs one: every project
+  // has a default (outputRootFor), so the first run is one click instead of a dead end.
+  const [chosenOutputRoot, setOutputRoot] = useState<string>(() => {
     try {
       return localStorage.getItem(OUTPUT_ROOT_KEY) || ''
     } catch {
       return ''
     }
   })
+  const outputRootFor = useCallback(
+    (d: NamProjectDetail | null): string => chosenOutputRoot || (d ? defaultTrainedModelsFolder(null, d.namCapturesDir) : ''),
+    [chosenOutputRoot]
+  )
+  const outputRoot = outputRootFor(detail)
   const [includeSynthetic, setIncludeSynthetic] = useState(false)
   const [queueing, setQueueing] = useState(false)
 
@@ -2506,11 +2513,11 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   }, [epochs])
   useEffect(() => {
     try {
-      if (outputRoot) localStorage.setItem(OUTPUT_ROOT_KEY, outputRoot)
+      if (chosenOutputRoot) localStorage.setItem(OUTPUT_ROOT_KEY, chosenOutputRoot)
     } catch {
       /* non-fatal */
     }
-  }, [outputRoot])
+  }, [chosenOutputRoot])
 
   const refreshProjects = useCallback(async () => {
     setLoading(true)
@@ -2595,9 +2602,6 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           return
         }
         setDetail(d)
-        // First run: no model folder yet. Default to "Trained Models" in the IR Lab project so the
-        // review's buttons are live; the user can still change it there.
-        setOutputRoot((current) => current || defaultTrainedModelsFolder(intent.projectFolder, d.namCapturesDir))
         const resolved = resolveTrainIntentCaptures(intent, d.captures)
         setTrainReview({ projectName: d.name, captures: resolved.captures, missingIds: resolved.missingIds })
       } catch (err) {
@@ -2991,48 +2995,61 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   // batch under a generic label rather than per-project labels.
   const stageOrTrainAllUntrained = useCallback(
     async (mode: 'stage' | 'runNext') => {
-      if (!outputRoot) {
-        setError('Choose a model output folder first (right panel).')
-        return
-      }
       const candidates = projects.filter((p) => p.trainedCount < p.captureCount)
       if (candidates.length === 0) return
       setQueueing(true)
       setError(null)
       setMessage(null)
       try {
-        const details = await Promise.all(candidates.map((p) => window.api.irLibraryGetNamProjectDetail(p.collectionId)))
-        const items = details.flatMap((d) =>
-          d ? d.captures.filter((c) => isQueueEligible(c, true)).map((c) => toBatchItem(c, d.name)) : []
+        const details = (await Promise.all(candidates.map((p) => window.api.irLibraryGetNamProjectDetail(p.collectionId)))).filter(
+          (d): d is NamProjectDetail => !!d
         )
-        if (items.length === 0) {
+        // One batch per model folder: a chosen folder pools every project into one; otherwise each
+        // project trains into its own "Trained Models" folder.
+        const groups = new Map<string, ReturnType<typeof toBatchItem>[]>()
+        for (const d of details) {
+          const root = outputRootFor(d)
+          const items = d.captures.filter((c) => isQueueEligible(c, true)).map((c) => toBatchItem(c, d.name))
+          if (!root || items.length === 0) continue
+          groups.set(root, [...(groups.get(root) ?? []), ...items])
+        }
+        if (groups.size === 0) {
           setError('Those captures are all trained already, or missing their WAV files.')
           return
         }
-        const res = await window.api.enqueueNamCaptureImport({
-          captures: items,
-          finalModelRoot: outputRoot,
-          architecture,
-          epochs,
-          includeSynthetic: true,
-          staged: mode === 'stage',
-          priority: mode === 'runNext' ? 'next' : 'normal',
-          submissionLabel: `All untrained — ${mode === 'stage' ? 'Stage' : 'Run next'}`
-        })
-        if (res.success) {
-          if (mode === 'stage') {
-            setMessage(`Staged ${res.built ?? items.length} job${(res.built ?? 1) === 1 ? '' : 's'} — opening the Batches page…`)
-            goToTrainingBatches()
-          } else {
-            setMessage(
-              `Queued ${res.built ?? items.length} job${(res.built ?? 1) === 1 ? '' : 's'} to run next` +
-                (res.ranNext ? ' (jumped ahead of the current queue)' : '') +
-                ' — opening the Queue…'
-            )
-            goToTrainingQueue()
+        // 'Run next' puts each batch at the FRONT, so enqueue in reverse to keep the first project first.
+        const entries = [...groups.entries()]
+        if (mode === 'runNext') entries.reverse()
+        let built = 0
+        let ranNext = false
+        for (const [root, items] of entries) {
+          const res = await window.api.enqueueNamCaptureImport({
+            captures: items,
+            finalModelRoot: root,
+            architecture,
+            epochs,
+            includeSynthetic: true,
+            staged: mode === 'stage',
+            priority: mode === 'runNext' ? 'next' : 'normal',
+            submissionLabel: `All untrained — ${mode === 'stage' ? 'Stage' : 'Run next'}`
+          })
+          if (!res.success) {
+            setError(res.error ?? 'Could not queue the batch.')
+            return
           }
+          built += res.built ?? items.length
+          ranNext = ranNext || !!res.ranNext
+        }
+        if (mode === 'stage') {
+          setMessage(`Staged ${built} job${built === 1 ? '' : 's'} — opening the Batches page…`)
+          goToTrainingBatches()
         } else {
-          setError(res.error ?? 'Could not queue the batch.')
+          setMessage(
+            `Queued ${built} job${built === 1 ? '' : 's'} to run next` +
+              (ranNext ? ' (jumped ahead of the current queue)' : '') +
+              ' — opening the Queue…'
+          )
+          goToTrainingQueue()
         }
       } catch (err) {
         setError(String(err))
@@ -3040,7 +3057,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         setQueueing(false)
       }
     },
-    [projects, outputRoot, architecture, epochs]
+    [projects, outputRootFor, architecture, epochs]
   )
 
   const projectEligible = useMemo(
@@ -3805,7 +3822,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                     title={outputRoot || 'Choose a folder for the trained .nam files'}
                     className="px-2 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov text-left truncate"
                   >
-                    {outputRoot || 'Choose folder…'}
+                    {outputRoot ? (chosenOutputRoot ? outputRoot : `${outputRoot} (default)`) : 'Choose folder…'}
                   </button>
                 </div>
 
@@ -3983,7 +4000,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                     setError(`"${d.name}" has no untrainable captures (all trained, or WAVs missing).`)
                     return
                   }
-                  if (!outputRoot) {
+                  const root = outputRootFor(d)
+                  if (!root) {
                     setError('Choose a model output folder first (right panel).')
                     return
                   }
@@ -3991,7 +4009,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   try {
                     const res = await window.api.enqueueNamCaptureImport({
                       captures: eligible.map((c) => toBatchItem(c, d.name)),
-                      finalModelRoot: outputRoot,
+                      finalModelRoot: root,
                       architecture,
                       epochs,
                       includeSynthetic: true,
