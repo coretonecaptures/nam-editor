@@ -39,10 +39,19 @@ export interface NamCaptureImportItem {
 export interface NamCaptureImportConfig {
   pythonPath: string
   finalModelRoot: string
+  /** One architecture (the original single-recipe call). Ignored when `architectures` is non-empty. */
   architecture: string
+  /** The Training Preset's architectures: one job per capture per entry (a bundle = several presets, several calls). */
+  architectures?: string[]
   epochs: number
   thresholdEsr: number | null
   latency: number | null
+  /** Preset knobs the single-recipe call used to hard-code. */
+  savePlot?: boolean
+  ignoreChecks?: boolean
+  /** The preset these jobs came from, shown as the profile chip in Queue / History. */
+  presetId?: string | null
+  presetName?: string | null
   includeSynthetic: boolean
   /** When set, every built payload carries this submission so the jobs group as one named batch. */
   submission?: { id: string; label: string; createdAt: string }
@@ -95,10 +104,9 @@ export async function buildNamCaptureImportPayloads(
 
   const pythonPath = config.pythonPath.trim()
   const finalModelRoot = config.finalModelRoot.trim()
-  if (!pythonPath || !finalModelRoot || !config.architecture) return { payloads, skipped }
-
-  const isA2 = config.architecture === 'a2'
-  const profileCfg = isA2 ? null : resolveProfile(config.architecture)
+  const architectures = (config.architectures?.length ? config.architectures : [config.architecture]).filter(Boolean)
+  if (!pythonPath || !finalModelRoot || architectures.length === 0) return { payloads, skipped }
+  const multiArchitecture = architectures.length > 1
 
   for (const capture of captures) {
     if (capture.synthetic && !config.includeSynthetic) {
@@ -115,60 +123,69 @@ export async function buildNamCaptureImportPayloads(
       skipped.push({ captureName: capture.captureName, reason: 'not-on-disk' })
       continue
     }
-    payloads.push({
-      pythonPath,
-      // Per-capture DI/return pair — the whole point of the sibling builder.
-      inputPath: excitationPath,
-      outputPath: recordingPath,
-      trainPath: finalModelRoot,
-      namMode: isA2 ? 'a2' : 'a1',
-      normalizeWav: defaults.normalizeWav,
-      normalizeWavTargetDb: defaults.normalizeWavTargetDb,
-      architecture: config.architecture,
-      waveNetConfig: profileCfg?.waveNetConfig ?? null,
-      lr: profileCfg?.lr ?? 0.004,
-      lrDecay: profileCfg?.lrDecay ?? 0.002,
-      batchSize: profileCfg?.batchSize ?? 16,
-      ny: profileCfg?.ny ?? 8192,
-      fitMrstft: profileCfg?.fitMrstft ?? true,
-      captureProfileId: isA2 ? null : config.architecture,
-      epochs: config.epochs,
-      latency: config.latency,
-      thresholdEsr: config.thresholdEsr,
-      savePlot: true,
-      silent: true,
-      ignoreChecks: false,
-      // Capture's own calibration/hints win over the trainer-tab defaults when present.
-      modeledBy: capture.suggested?.modeledBy ?? defaults.modeledBy,
-      inputLevelDbu: capture.inputLevelDbu ?? defaults.inputLevelDbu,
-      outputLevelDbu: capture.outputLevelDbu ?? defaults.outputLevelDbu,
-      profileId: null,
-      profileName: capture.projectName || null,
-      sourceMode: 'nam-capture-import',
-      finalModelRoot,
-      processedWavRoot: '',
-      graphRoot: finalModelRoot,
-      graphRootResolved: false,
-      sourcePostProcess: 'keep',
-      // captureName has no {tokens}, so fillTrainerNamingTemplate passes it straight through
-      // sanitizeTrainerPathPart — the .nam is named after the capture, not "recording".
-      namingTemplate: capture.captureName || '{basename}',
-      namCaptureFolderPath: capture.captureFolderPath,
-      namCaptureId: capture.captureId,
-      namCaptureName: capture.captureName,
-      namProjectName: capture.projectName,
-      namSuggestedModeledBy: capture.suggested?.modeledBy ?? null,
-      namSuggestedGearMake: capture.suggested?.gearMake ?? null,
-      namSuggestedGearModel: capture.suggested?.gearModel ?? null,
-      namSuggestedGearType: capture.suggested?.gearType ?? null,
-      namSuggestedToneType: capture.suggested?.toneType ?? null,
-      submissionId: config.submission?.id ?? null,
-      submissionLabel: config.submission?.label ?? null,
-      submissionCreatedAt: config.submission?.createdAt ?? null,
-      appendModelArchitectureFolder: false,
-      appendGraphArchitectureFolder: false,
-      appendProcessedArchitectureFolder: false,
-    })
+    for (const architecture of architectures) {
+      const isA2 = architecture === 'a2'
+      const profileCfg = isA2 ? null : resolveProfile(architecture)
+      payloads.push({
+        pythonPath,
+        // Per-capture DI/return pair — the whole point of the sibling builder.
+        inputPath: excitationPath,
+        outputPath: recordingPath,
+        trainPath: finalModelRoot,
+        namMode: isA2 ? 'a2' : 'a1',
+        // NEVER normalise an IR Lab pair, whatever the global trainer setting says: the level
+        // relationship between the excitation and the recording is the training data (IR Lab's own
+        // rule -- a capture is not normalised after it is made).
+        normalizeWav: false,
+        normalizeWavTargetDb: defaults.normalizeWavTargetDb,
+        architecture,
+        waveNetConfig: profileCfg?.waveNetConfig ?? null,
+        lr: profileCfg?.lr ?? 0.004,
+        lrDecay: profileCfg?.lrDecay ?? 0.002,
+        batchSize: profileCfg?.batchSize ?? 16,
+        ny: profileCfg?.ny ?? 8192,
+        fitMrstft: profileCfg?.fitMrstft ?? true,
+        captureProfileId: isA2 ? null : architecture,
+        epochs: config.epochs,
+        latency: config.latency,
+        thresholdEsr: config.thresholdEsr,
+        savePlot: config.savePlot ?? true,
+        silent: true,
+        ignoreChecks: config.ignoreChecks ?? false,
+        // Capture's own calibration/hints win over the trainer-tab defaults when present.
+        modeledBy: capture.suggested?.modeledBy ?? defaults.modeledBy,
+        inputLevelDbu: capture.inputLevelDbu ?? defaults.inputLevelDbu,
+        outputLevelDbu: capture.outputLevelDbu ?? defaults.outputLevelDbu,
+        profileId: config.presetId ?? null,
+        profileName: config.presetName ?? (capture.projectName || null),
+        sourceMode: 'nam-capture-import',
+        finalModelRoot,
+        processedWavRoot: '',
+        graphRoot: finalModelRoot,
+        graphRootResolved: false,
+        sourcePostProcess: 'keep',
+        // captureName has no {tokens}, so fillTrainerNamingTemplate passes it straight through
+        // sanitizeTrainerPathPart — the .nam is named after the capture, not "recording".
+        namingTemplate: capture.captureName || '{basename}',
+        namCaptureFolderPath: capture.captureFolderPath,
+        namCaptureId: capture.captureId,
+        namCaptureName: capture.captureName,
+        namProjectName: capture.projectName,
+        namSuggestedModeledBy: capture.suggested?.modeledBy ?? null,
+        namSuggestedGearMake: capture.suggested?.gearMake ?? null,
+        namSuggestedGearModel: capture.suggested?.gearModel ?? null,
+        namSuggestedGearType: capture.suggested?.gearType ?? null,
+        namSuggestedToneType: capture.suggested?.toneType ?? null,
+        submissionId: config.submission?.id ?? null,
+        submissionLabel: config.submission?.label ?? null,
+        submissionCreatedAt: config.submission?.createdAt ?? null,
+        // More than one architecture in a run would overwrite each other's model/graph: give each
+        // its own sub-folder (the same rule Create Batch applies).
+        appendModelArchitectureFolder: multiArchitecture,
+        appendGraphArchitectureFolder: multiArchitecture,
+        appendProcessedArchitectureFolder: false,
+      })
+    }
   }
   return { payloads, skipped }
 }

@@ -221,6 +221,12 @@ const api = {
     pythonPath?: string
     finalModelRoot: string
     architecture: string
+    // A Training Preset's recipe (Create Batch > From IR Lab); absent = single-architecture call.
+    architectures?: string[]
+    savePlot?: boolean
+    ignoreChecks?: boolean
+    presetId?: string | null
+    presetName?: string | null
     epochs: number
     thresholdEsr?: number | null
     latency?: number | null

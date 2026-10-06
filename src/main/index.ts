@@ -3779,9 +3779,14 @@ async function buildTrainerPayloadsForNamCaptureImport(
     pythonPath: string
     finalModelRoot: string
     architecture: TrainerArchitecture
+    architectures?: TrainerArchitecture[]
     epochs: number
     thresholdEsr: number | null
     latency: number | null
+    savePlot?: boolean
+    ignoreChecks?: boolean
+    presetId?: string | null
+    presetName?: string | null
     includeSynthetic: boolean
     submission?: { id: string; label: string; createdAt: string }
   }
@@ -8096,6 +8101,13 @@ app.whenReady().then(async () => {
         pythonPath?: string
         finalModelRoot: string
         architecture: TrainerArchitecture
+        // The Training Preset's own recipe (Create Batch > From IR Lab). Absent = the original
+        // single-architecture call (NAM Projects' own panel), unchanged.
+        architectures?: TrainerArchitecture[]
+        savePlot?: boolean
+        ignoreChecks?: boolean
+        presetId?: string | null
+        presetName?: string | null
         epochs: number
         thresholdEsr?: number | null
         latency?: number | null
@@ -8124,9 +8136,14 @@ app.whenReady().then(async () => {
         pythonPath,
         finalModelRoot: req.finalModelRoot,
         architecture: req.architecture,
+        architectures: req.architectures,
         epochs: req.epochs,
         thresholdEsr: req.thresholdEsr ?? null,
         latency: req.latency ?? null,
+        savePlot: req.savePlot,
+        ignoreChecks: req.ignoreChecks,
+        presetId: req.presetId ?? null,
+        presetName: req.presetName ?? null,
         includeSynthetic: req.includeSynthetic ?? false,
         submission,
       })

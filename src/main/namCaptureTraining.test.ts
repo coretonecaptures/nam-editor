@@ -209,3 +209,74 @@ describe('findModelNameConflicts', () => {
     expect(out.every((c) => c.duplicateInBatch)).toBe(true)
   })
 })
+
+describe('buildNamCaptureImportPayloads: preset-driven recipe', () => {
+  it('never normalises an IR Lab pair, even when the global trainer setting says to', async () => {
+    const { payloads } = await buildNamCaptureImportPayloads(
+      [item('pair')],
+      baseConfig,
+      { ...defaults, normalizeWav: true, normalizeWavTargetDb: -3 },
+      stdProfile
+    )
+    expect(payloads[0].normalizeWav).toBe(false)
+  })
+
+  it('one job per capture per architecture, each in its own sub-folder', async () => {
+    const { payloads } = await buildNamCaptureImportPayloads(
+      [item('x'), item('y')],
+      { ...baseConfig, architecture: 'standard', architectures: ['a2', 'standard'] },
+      defaults,
+      stdProfile
+    )
+    expect(payloads.map((p) => `${p.namCaptureName}:${p.architecture}`)).toEqual(['x:a2', 'x:standard', 'y:a2', 'y:standard'])
+    expect(payloads.filter((p) => p.architecture === 'a2').every((p) => p.namMode === 'a2' && p.waveNetConfig === null)).toBe(true)
+    expect(payloads.filter((p) => p.architecture === 'standard').every((p) => p.namMode === 'a1' && p.lr === 0.01)).toBe(true)
+    expect(payloads.every((p) => p.appendModelArchitectureFolder && p.appendGraphArchitectureFolder)).toBe(true)
+  })
+
+  it('a single architecture keeps the folder flat', async () => {
+    const { payloads } = await buildNamCaptureImportPayloads(
+      [item('solo')],
+      { ...baseConfig, architectures: ['a2'] },
+      defaults,
+      stdProfile
+    )
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0].appendModelArchitectureFolder).toBe(false)
+  })
+
+  it('carries the preset: epochs, latency, ESR, plot, checks, and its name as the profile chip', async () => {
+    const { payloads } = await buildNamCaptureImportPayloads(
+      [item('p')],
+      {
+        ...baseConfig,
+        architectures: ['a2'],
+        epochs: 500,
+        latency: 1137,
+        thresholdEsr: 0.01,
+        savePlot: false,
+        ignoreChecks: true,
+        presetId: 'preset-1',
+        presetName: 'IR Lab A2'
+      },
+      defaults,
+      stdProfile
+    )
+    const p = payloads[0]
+    expect(p.epochs).toBe(500)
+    expect(p.latency).toBe(1137)
+    expect(p.thresholdEsr).toBe(0.01)
+    expect(p.savePlot).toBe(false)
+    expect(p.ignoreChecks).toBe(true)
+    expect(p.profileId).toBe('preset-1')
+    expect(p.profileName).toBe('IR Lab A2')
+  })
+
+  it('without a preset, behaves as before (plot on, checks on, project as the chip)', async () => {
+    const { payloads } = await buildNamCaptureImportPayloads([item('legacy')], baseConfig, defaults, stdProfile)
+    expect(payloads[0].savePlot).toBe(true)
+    expect(payloads[0].ignoreChecks).toBe(false)
+    expect(payloads[0].profileId).toBeNull()
+    expect(payloads[0].profileName).toBe('Proj')
+  })
+})
