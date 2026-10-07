@@ -1305,6 +1305,8 @@ interface TrainerStartPayload {
   namSuggestedGearModel?: string | null
   namSuggestedGearType?: string | null
   namSuggestedToneType?: string | null
+  /** IR Lab "About this capture": non-blank metadata.nam_lab.* details (amp_channel, amp_settings, ...). */
+  namSuggestedNamLab?: Record<string, string> | null
 }
 
 interface TrainerQueueJob {
@@ -1374,6 +1376,8 @@ interface TrainerQueueJob {
   namSuggestedGearModel?: string | null
   namSuggestedGearType?: string | null
   namSuggestedToneType?: string | null
+  /** IR Lab "About this capture": non-blank metadata.nam_lab.* details (amp_channel, amp_settings, ...). */
+  namSuggestedNamLab?: Record<string, string> | null
   backupExisting?: boolean
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
@@ -3450,6 +3454,7 @@ function createTrainerJob(payload: TrainerStartPayload, staged = false): Trainer
     namSuggestedGearModel: payload.namSuggestedGearModel ?? null,
     namSuggestedGearType: payload.namSuggestedGearType ?? null,
     namSuggestedToneType: payload.namSuggestedToneType ?? null,
+    namSuggestedNamLab: payload.namSuggestedNamLab ?? null,
     backupExisting: !!payload.backupExisting,
     appendModelArchitectureFolder,
     appendGraphArchitectureFolder,
@@ -4347,6 +4352,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
                   gear_model: job.namSuggestedGearModel ?? null,
                   gear_type: job.namSuggestedGearType ?? null,
                   tone_type: job.namSuggestedToneType ?? null,
+                  nam_lab: job.namSuggestedNamLab ?? null,
                 }
               : null,
         })
@@ -5735,6 +5741,8 @@ function persistTrainerMetadata(
       gear_model: string | null
       gear_type: string | null
       tone_type: string | null
+      /** Optional per-capture details, keyed as metadata.nam_lab stores them. */
+      nam_lab?: Record<string, string> | null
     } | null
   }
 ): string {
@@ -5799,6 +5807,12 @@ function persistTrainerMetadata(
     if (s.gear_model?.trim()) patched = patchMetadataField(patched, 'gear_model', s.gear_model.trim())
     if (s.gear_type?.trim()) patched = patchMetadataField(patched, 'gear_type', s.gear_type.trim())
     if (s.tone_type?.trim()) patched = patchMetadataField(patched, 'tone_type', s.tone_type.trim())
+    // The optional per-capture details (amp channel, settings, switches, pedals, cabinet, mics, comments): only the
+    // keys NAM Lab's own tagging knows, only non-blank.
+    const allowed = new Set(['amp_channel', 'amp_settings', 'amp_switches', 'boost_pedal', 'pedal_settings', 'cabinet', 'cabinet_config', 'mics', 'comments'])
+    for (const [key, value] of Object.entries(s.nam_lab ?? {})) {
+      if (allowed.has(key) && typeof value === 'string' && value.trim()) patched = patchNamLabField(patched, key, value.trim())
+    }
   }
   return applyTrainerMetadataConventions(patched, { architecture: options.architecture })
 }

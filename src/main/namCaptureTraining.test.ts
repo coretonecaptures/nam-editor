@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   buildNamCaptureImportPayloads,
   findModelNameConflicts,
+  readSidecarNamLabDetails,
   type NamCaptureImportItem,
   type NamCaptureImportConfig,
   type NamCaptureImportDefaults,
@@ -278,5 +279,51 @@ describe('buildNamCaptureImportPayloads: preset-driven recipe', () => {
     expect(payloads[0].ignoreChecks).toBe(false)
     expect(payloads[0].profileId).toBeNull()
     expect(payloads[0].profileName).toBe('Proj')
+  })
+})
+
+describe('per-capture details from the IR Lab sidecar', () => {
+  function pairWithSidecar(name: string, hints: unknown): { excitationPath: string; recordingPath: string } {
+    const pair = realPair(name)
+    fs.writeFileSync(
+      pair.recordingPath.replace(/\.wav$/, '.nam-capture.json'),
+      JSON.stringify({ schemaVersion: 2, modelMetadataSuggested: hints })
+    )
+    return pair
+  }
+
+  it('reads the nine optional fields, keyed the way the .nam stores them, non-blank only', () => {
+    const pair = pairWithSidecar('details', {
+      name: 'Mark IV Lead',
+      gearMake: 'Mesa',
+      ampChannel: ' Lead ',
+      ampSettings: 'Gain 6, Bass 5',
+      boostPedal: '',
+      cabinetConfig: 'Closed back',
+      mics: 'SM57, R121',
+      comments: 'Bright switch on'
+    })
+    expect(readSidecarNamLabDetails(pair.recordingPath)).toEqual({
+      amp_channel: 'Lead',
+      amp_settings: 'Gain 6, Bass 5',
+      cabinet_config: 'Closed back',
+      mics: 'SM57, R121',
+      comments: 'Bright switch on'
+    })
+  })
+
+  it('is null for no sidecar, no details, or a damaged sidecar -- never throws', () => {
+    expect(readSidecarNamLabDetails(realPair('nosidecar').recordingPath)).toBeNull()
+    expect(readSidecarNamLabDetails(pairWithSidecar('empty', { name: 'x', gearMake: 'y' }).recordingPath)).toBeNull()
+    const bad = realPair('bad')
+    fs.writeFileSync(bad.recordingPath.replace(/\.wav$/, '.nam-capture.json'), '{not json')
+    expect(readSidecarNamLabDetails(bad.recordingPath)).toBeNull()
+  })
+
+  it('rides on each training job so the finished .nam can be patched', async () => {
+    const pair = pairWithSidecar('rides', { ampChannel: 'Clean', cabinet: '4x12 V30' })
+    const it1: NamCaptureImportItem = { ...item('rides'), ...pair }
+    const { payloads } = await buildNamCaptureImportPayloads([it1], baseConfig, defaults, stdProfile)
+    expect(payloads[0].namSuggestedNamLab).toEqual({ amp_channel: 'Clean', cabinet: '4x12 V30' })
   })
 })

@@ -207,6 +207,8 @@ export interface TrainerStartPayload {
   namSuggestedGearModel?: string | null
   namSuggestedGearType?: string | null
   namSuggestedToneType?: string | null
+  /** IR Lab "About this capture": non-blank metadata.nam_lab.* details. */
+  namSuggestedNamLab?: Record<string, string> | null
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean
   appendProcessedArchitectureFolder?: boolean
@@ -284,6 +286,8 @@ export interface TrainerQueueJob {
   namSuggestedGearModel?: string | null
   namSuggestedGearType?: string | null
   namSuggestedToneType?: string | null
+  /** IR Lab "About this capture": non-blank metadata.nam_lab.* details. */
+  namSuggestedNamLab?: Record<string, string> | null
   backupExisting?: boolean
   appendModelArchitectureFolder?: boolean
   appendGraphArchitectureFolder?: boolean

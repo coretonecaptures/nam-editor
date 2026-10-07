@@ -36,6 +36,45 @@ export interface NamCaptureImportItem {
   } | null
 }
 
+/** The sidecar's optional per-capture details (IR Lab "About this capture") -> the .nam's `metadata.nam_lab.*` keys. */
+export const NAM_LAB_DETAIL_KEYS = {
+  ampChannel: 'amp_channel',
+  ampSettings: 'amp_settings',
+  ampSwitches: 'amp_switches',
+  boostPedal: 'boost_pedal',
+  pedalSettings: 'pedal_settings',
+  cabinet: 'cabinet',
+  cabinetConfig: 'cabinet_config',
+  mics: 'mics',
+  comments: 'comments'
+} as const
+
+/**
+ * Reads the `modelMetadataSuggested` block next to a capture's recording (`<name>.wav` ->
+ * `<name>.nam-capture.json`) and returns the non-blank nam_lab detail fields, keyed the way the .nam
+ * stores them. Straight from the file rather than the catalog: these fields are optional, free text,
+ * and new -- the catalog's column set is not widened for them. Null when there is no sidecar or
+ * nothing was filled in; never throws (a damaged sidecar must not stop a training run).
+ */
+export function readSidecarNamLabDetails(recordingPath: string): Record<string, string> | null {
+  try {
+    const sidecar = join(
+      recordingPath.slice(0, recordingPath.length - extname(recordingPath).length) + '.nam-capture.json'
+    )
+    const parsed = JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { modelMetadataSuggested?: Record<string, unknown> }
+    const hints = parsed.modelMetadataSuggested
+    if (!hints || typeof hints !== 'object') return null
+    const out: Record<string, string> = {}
+    for (const [sidecarKey, namLabKey] of Object.entries(NAM_LAB_DETAIL_KEYS)) {
+      const value = hints[sidecarKey]
+      if (typeof value === 'string' && value.trim()) out[namLabKey] = value.trim()
+    }
+    return Object.keys(out).length > 0 ? out : null
+  } catch {
+    return null
+  }
+}
+
 export interface NamCaptureImportConfig {
   pythonPath: string
   finalModelRoot: string
@@ -176,6 +215,7 @@ export async function buildNamCaptureImportPayloads(
         namSuggestedGearModel: capture.suggested?.gearModel ?? null,
         namSuggestedGearType: capture.suggested?.gearType ?? null,
         namSuggestedToneType: capture.suggested?.toneType ?? null,
+        namSuggestedNamLab: readSidecarNamLabDetails(recordingPath),
         submissionId: config.submission?.id ?? null,
         submissionLabel: config.submission?.label ?? null,
         submissionCreatedAt: config.submission?.createdAt ?? null,
