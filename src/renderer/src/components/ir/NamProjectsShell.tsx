@@ -2950,6 +2950,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       setMessage(null)
       try {
         const res = await window.api.enqueueNamCaptureImport({
+                    pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
           captures: eligible.map((c) => toBatchItem(c, detail.name)),
           finalModelRoot: outputRoot,
           architecture,
@@ -2984,7 +2985,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         setQueueing(false)
       }
     },
-    [detail, outputRoot, architecture, epochs]
+    [detail, outputRoot, architecture, epochs, settings.namPythonPath]
   )
   const stageBatch = useCallback(
     (captures: NamCaptureRow[], labelSuffix: string) => submitBatch(captures, labelSuffix, 'stage'),
@@ -3026,6 +3027,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         let ranNext = false
         for (const [root, items] of entries) {
           const res = await window.api.enqueueNamCaptureImport({
+                        pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
             captures: items,
             finalModelRoot: root,
             architecture,
@@ -3059,7 +3061,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         setQueueing(false)
       }
     },
-    [projects, outputRootFor, architecture, epochs]
+    [projects, outputRootFor, architecture, epochs, settings.namPythonPath]
   )
 
   const projectEligible = useMemo(
@@ -3301,7 +3303,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       {showSettings && (
         <SettingsPanel
           settings={settings}
-          onSave={(s) => { setSettings(s); saveSettings(s); setShowSettings(false) }}
+          onSave={(s) => { setSettings(s); saveSettings(s) }}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -4015,6 +4017,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   setQueueing(true)
                   try {
                     const res = await window.api.enqueueNamCaptureImport({
+                                            pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
                       captures: eligible.map((c) => toBatchItem(c, d.name)),
                       finalModelRoot: root,
                       architecture,

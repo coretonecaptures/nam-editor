@@ -1961,7 +1961,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
       {showSettings && (
         <SettingsPanel
           settings={appSettings}
-          onSave={(s) => { setAppSettings(s); saveSettings(s); setShowSettings(false) }}
+          onSave={(s) => { setAppSettings(s); saveSettings(s) }}
           onClose={() => setShowSettings(false)}
         />
       )}
@@ -2551,7 +2551,8 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           <>
           <div
             onMouseDown={onPanelDragStart}
-            className="w-1 flex-shrink-0 cursor-col-resize hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
+            title="Drag to resize the right panel"
+            className="w-2 flex-shrink-0 cursor-col-resize bg-nm-border-s hover:bg-nm-accent/40 active:bg-nm-accent/60 transition-colors"
           />
           <div style={{ width: panelWidth }} className="flex-shrink-0 overflow-hidden">
             {/* The player REPLACES the tabs while it's open, exactly as NAM mode's own list does
