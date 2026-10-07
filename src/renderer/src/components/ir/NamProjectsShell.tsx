@@ -2931,11 +2931,11 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
 
   // --- batch creation ---
   const submitBatch = useCallback(
-    async (captures: NamCaptureRow[], labelSuffix: string, mode: 'stage' | 'runNext', allowRetrain = false) => {
-      if (!detail || captures.length === 0) return
+    async (captures: NamCaptureRow[], labelSuffix: string, mode: 'stage' | 'runNext', allowRetrain = false): Promise<boolean> => {
+      if (!detail || captures.length === 0) return false
       if (!outputRoot) {
         setError('Choose a model output folder first (right panel).')
-        return
+        return false
       }
       // allowRetrain: the Train-from-IR-Lab review, where the user explicitly ticked a trained capture.
       const eligible = captures.filter((c) =>
@@ -2943,7 +2943,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       ) // include-synthetic gate handled per call site
       if (eligible.length === 0) {
         setError('Those captures are all trained already, or missing their WAV files.')
-        return
+        return false
       }
       setQueueing(true)
       setError(null)
@@ -2973,11 +2973,13 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
             )
             goToTrainingQueue()
           }
-        } else {
-          setError(res.error ?? 'Could not queue the batch.')
+          return true
         }
+        setError(res.error ?? 'Could not queue the batch.')
+        return false
       } catch (err) {
         setError(String(err))
+        return false
       } finally {
         setQueueing(false)
       }
@@ -3341,8 +3343,13 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           epochs={epochs}
           busy={queueing}
           onChooseOutput={() => void handleChooseOutput()}
+          error={error}
           onSubmit={(captures, mode) => {
-            void submitBatch(captures, 'From IR Lab', mode, true).then(() => setTrainReview(null))
+            // Close only on success: a refusal (no Python path yet, no output folder...) used to vanish with the dialog,
+            // leaving "nothing happened" -- now it stays up with the reason shown inside it.
+            void submitBatch(captures, 'From IR Lab', mode, true).then((ok) => {
+              if (ok) setTrainReview(null)
+            })
           }}
           onClose={() => setTrainReview(null)}
         />

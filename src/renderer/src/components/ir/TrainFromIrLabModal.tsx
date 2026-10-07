@@ -73,6 +73,7 @@ export function TrainFromIrLabModal({
   architectureLabel,
   epochs,
   busy,
+  error,
   onChooseOutput,
   onSubmit,
   onClose
@@ -82,6 +83,7 @@ export function TrainFromIrLabModal({
   architectureLabel: string
   epochs: number
   busy: boolean
+  error?: string | null
   onChooseOutput: () => void
   onSubmit: (captures: NamCaptureRow[], mode: 'stage' | 'runNext') => void
   onClose: () => void
@@ -221,6 +223,10 @@ export function TrainFromIrLabModal({
             {outputRoot ? 'Change folder…' : 'Choose output folder…'}
           </button>
         </div>
+
+        {error && (
+          <div className="px-4 py-2 border-t border-nm-border-s text-[11px] text-red-600 dark:text-red-400">{error}</div>
+        )}
 
         <div className="px-4 py-3 border-t border-nm-border-s flex justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-1.5 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-50">
