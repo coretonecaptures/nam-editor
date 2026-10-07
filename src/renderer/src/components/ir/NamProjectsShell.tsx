@@ -30,7 +30,7 @@ import {
 } from './TrainFromIrLabModal'
 import { SettingsPanel } from '../SettingsPanel'
 import { IrHelpModal } from './IrHelpModal'
-import { AppSettings, loadSettings, saveSettings } from '../../types/settings'
+import { AppSettings, TrainingPreset, loadSettings, saveSettings } from '../../types/settings'
 import { namGearChipClass, namToneChipClass } from '../../assets/gear'
 import { ScaledImage } from '../ScaledImage'
 
@@ -45,6 +45,40 @@ function isMacPlatform(): boolean {
 const ARCH_LABEL: Record<string, string> = Object.fromEntries(
   BUILT_IN_CAPTURE_PROFILES.map((p) => [p.id, p.name])
 )
+
+/** One training recipe for a batch: either the hand-set architecture/epochs ('Custom') or one Training Preset. */
+interface TrainRecipe {
+  architectures: string[]
+  epochs: number
+  thresholdEsr: number | null
+  latency: number | null
+  savePlot?: boolean
+  ignoreChecks?: boolean
+  presetId: string | null
+  presetName: string | null
+}
+
+function recipeFromPreset(preset: TrainingPreset, fallbackArchitecture: string): TrainRecipe {
+  return {
+    architectures: preset.architectures.length > 0 ? preset.architectures : [fallbackArchitecture],
+    epochs: preset.epochs,
+    thresholdEsr: preset.thresholdEsr,
+    latency: preset.latencyMode === 'manual' ? preset.latencyValue : null,
+    savePlot: preset.savePlot,
+    ignoreChecks: preset.ignoreChecks,
+    presetId: preset.id,
+    presetName: preset.name
+  }
+}
+
+function describeRecipes(recipes: TrainRecipe[]): string {
+  return recipes
+    .map((rc) => {
+      const archs = rc.architectures.map((a) => ARCH_LABEL[a] ?? a).join(' + ')
+      return `${rc.presetName ? `${rc.presetName}: ` : ''}${archs} · ${rc.epochs} epochs`
+    })
+    .join('  |  ')
+}
 
 /**
  * "NAM Projects" mode — the third top-level workspace (docs/nam-capture-import-plan-2026-08-29.md
@@ -63,6 +97,7 @@ const ARCH_LABEL: Record<string, string> = Object.fromEntries(
 const OUTPUT_ROOT_KEY = 'nam-lab-nam-projects-output-root'
 const ARCH_KEY = 'nam-lab-nam-projects-architecture'
 const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
+const TRAIN_PRESET_KEY = 'nam-lab-nam-projects-train-preset'
 const SELECTED_KEY = 'nam-lab-nam-projects-selected'
 const VIEW_KEY = 'nam-lab-nam-projects-view'
 const CAPTURE_VIEW_KEY = 'nam-lab-nam-projects-capture-view'
@@ -2063,8 +2098,7 @@ function CaptureDetailPanel({
   capture,
   projectId,
   outputRoot,
-  architecture,
-  epochs,
+  recipeSummary,
   onBack,
   onReveal,
   onOpen,
@@ -2077,8 +2111,7 @@ function CaptureDetailPanel({
   capture: NamCaptureRow
   projectId: string
   outputRoot: string
-  architecture: string
-  epochs: number
+  recipeSummary: string
   onBack: () => void
   onReveal: (p: string) => void
   onOpen: (p: string) => void
@@ -2255,8 +2288,7 @@ function CaptureDetailPanel({
         ) : (
           <>
             <span className="text-[11px] text-nm-text-3">
-              Not trained yet. Uses architecture <strong>{ARCH_LABEL[architecture] ?? architecture}</strong>,{' '}
-              {epochs} epochs, output {outputRoot || '(choose a folder in the project view)'}.
+              Not trained yet. Trains with <strong>{recipeSummary}</strong>, output {outputRoot || '(choose a folder in the project view)'}.
             </span>
             <div className="flex gap-2">
               <button
@@ -2480,6 +2512,22 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       return 1000
     }
   })
+  // Which recipe trains a batch: 'custom' (the architecture + epochs boxes), a Training Preset id, or 'bundle:<id>' --
+  // the same presets/bundles Settings > Training manages, so this screen no longer bypasses them.
+  const [presetChoice, setPresetChoice] = useState<string>(() => {
+    try {
+      return localStorage.getItem(TRAIN_PRESET_KEY) || 'custom'
+    } catch {
+      return 'custom'
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem(TRAIN_PRESET_KEY, presetChoice)
+    } catch {
+      /* non-fatal */
+    }
+  }, [presetChoice])
   // The folder the user explicitly chose ('' until they do). Training never needs one: every project
   // has a default (outputRootFor), so the first run is one click instead of a dead end.
   const [chosenOutputRoot, setOutputRoot] = useState<string>(() => {
@@ -2929,6 +2977,61 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     [detail, selectedCaptureId]
   )
 
+  // The recipe(s) a batch trains with. A bundle is several presets, so several recipes (one enqueue call each); an unknown
+  // choice (preset deleted in Settings since) falls back to Custom rather than silently training something else.
+  const recipes = useMemo<TrainRecipe[]>(() => {
+    const presets = settings.trainingPresets ?? []
+    if (presetChoice.startsWith('bundle:')) {
+      const bundle = (settings.trainingBundles ?? []).find((b) => `bundle:${b.id}` === presetChoice)
+      const members = (bundle?.presetIds ?? [])
+        .map((id) => presets.find((pr) => pr.id === id))
+        .filter((pr): pr is TrainingPreset => !!pr)
+      if (members.length > 0) return members.map((pr) => recipeFromPreset(pr, architecture))
+    } else if (presetChoice !== 'custom') {
+      const preset = presets.find((pr) => pr.id === presetChoice)
+      if (preset) return [recipeFromPreset(preset, architecture)]
+    }
+    return [{ architectures: [architecture], epochs, thresholdEsr: null, latency: null, presetId: null, presetName: null }]
+  }, [presetChoice, settings.trainingPresets, settings.trainingBundles, architecture, epochs])
+  const recipeSummary = useMemo(() => describeRecipes(recipes), [recipes])
+
+  // One enqueue per recipe, results merged. Everything about WHAT trains (architectures, epochs, ESR threshold, latency,
+  // plots, checks) comes from the recipe; the caller supplies WHICH captures, where they go, and staged/run-next.
+  const enqueueRecipes = useCallback(
+    async (base: {
+      captures: Parameters<typeof window.api.enqueueNamCaptureImport>[0]['captures']
+      finalModelRoot: string
+      includeSynthetic: boolean
+      staged: boolean
+      priority?: 'normal' | 'next'
+      submissionLabel: string
+    }): Promise<{ success: boolean; error?: string; built?: number; ranNext?: boolean }> => {
+      let built = 0
+      let ranNext = false
+      for (const recipe of recipes) {
+        const res = await window.api.enqueueNamCaptureImport({
+          ...base,
+          pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
+          architecture: recipe.architectures[0] ?? architecture,
+          architectures: recipe.presetId ? recipe.architectures : undefined,
+          epochs: recipe.epochs,
+          thresholdEsr: recipe.thresholdEsr,
+          latency: recipe.latency,
+          savePlot: recipe.savePlot,
+          ignoreChecks: recipe.ignoreChecks,
+          presetId: recipe.presetId,
+          presetName: recipe.presetName,
+          submissionLabel: recipes.length > 1 && recipe.presetName ? `${base.submissionLabel} · ${recipe.presetName}` : base.submissionLabel
+        })
+        if (!res.success) return { success: false, error: res.error, built: built || undefined }
+        built += res.built ?? 0
+        ranNext = ranNext || !!res.ranNext
+      }
+      return { success: true, built, ranNext }
+    },
+    [recipes, architecture, settings.namPythonPath]
+  )
+
   // --- batch creation ---
   const submitBatch = useCallback(
     async (captures: NamCaptureRow[], labelSuffix: string, mode: 'stage' | 'runNext', allowRetrain = false): Promise<boolean> => {
@@ -2949,12 +3052,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       setError(null)
       setMessage(null)
       try {
-        const res = await window.api.enqueueNamCaptureImport({
-                    pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
+        const res = await enqueueRecipes({
           captures: eligible.map((c) => toBatchItem(c, detail.name)),
           finalModelRoot: outputRoot,
-          architecture,
-          epochs,
           includeSynthetic: true, // eligible list already reflects the caller's intent
           staged: mode === 'stage',
           priority: mode === 'runNext' ? 'next' : 'normal',
@@ -2985,7 +3085,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         setQueueing(false)
       }
     },
-    [detail, outputRoot, architecture, epochs, settings.namPythonPath]
+    [detail, outputRoot, enqueueRecipes]
   )
   const stageBatch = useCallback(
     (captures: NamCaptureRow[], labelSuffix: string) => submitBatch(captures, labelSuffix, 'stage'),
@@ -3026,12 +3126,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         let built = 0
         let ranNext = false
         for (const [root, items] of entries) {
-          const res = await window.api.enqueueNamCaptureImport({
-                        pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
+          const res = await enqueueRecipes({
             captures: items,
             finalModelRoot: root,
-            architecture,
-            epochs,
             includeSynthetic: true,
             staged: mode === 'stage',
             priority: mode === 'runNext' ? 'next' : 'normal',
@@ -3061,7 +3158,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         setQueueing(false)
       }
     },
-    [projects, outputRootFor, architecture, epochs, settings.namPythonPath]
+    [projects, outputRootFor, enqueueRecipes]
   )
 
   const projectEligible = useMemo(
@@ -3341,8 +3438,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
         <TrainFromIrLabModal
           request={trainReview}
           outputRoot={outputRoot}
-          architectureLabel={ARCH_LABEL[architecture] ?? architecture}
-          epochs={epochs}
+          recipeSummary={recipeSummary}
           busy={queueing}
           onChooseOutput={() => void handleChooseOutput()}
           error={error}
@@ -3799,30 +3895,71 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 <span className="text-xs font-semibold text-nm-text-2">Batch settings</span>
 
                 <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
-                  Architecture
+                  Training preset
                   <select
-                    value={architecture}
-                    onChange={(e) => setArchitecture(e.target.value)}
+                    value={recipes[0]?.presetId || recipes[0]?.presetName ? presetChoice : 'custom'}
+                    onChange={(e) => setPresetChoice(e.target.value)}
                     className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
                   >
-                    {TRAINER_ARCHITECTURES.map((a) => (
-                      <option key={a} value={a}>
-                        {ARCH_LABEL[a] ?? a}
+                    <option value="custom">Custom (architecture + epochs)</option>
+                    {(settings.trainingPresets ?? []).map((pr) => (
+                      <option key={pr.id} value={pr.id}>
+                        {pr.name}
+                      </option>
+                    ))}
+                    {(settings.trainingBundles ?? []).map((b) => (
+                      <option key={b.id} value={`bundle:${b.id}`}>
+                        {b.name} (bundle)
                       </option>
                     ))}
                   </select>
+                  {(settings.trainingPresets ?? []).length === 0 && (
+                    <span className="text-[10px] text-nm-text-3">
+                      No presets yet — make them in Settings → Training (Training Presets) and they show up here.
+                    </span>
+                  )}
                 </label>
 
-                <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
-                  Epochs
-                  <input
-                    type="number"
-                    min={1}
-                    value={epochs}
-                    onChange={(e) => setEpochs(Math.max(1, Number(e.target.value) || 1))}
-                    className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
-                  />
-                </label>
+                {recipes[0]?.presetId ? (
+                  <div className="text-[11px] text-nm-text-2 leading-snug rounded border border-field-bd px-2 py-1.5">
+                    {recipes.map((rc) => (
+                      <div key={rc.presetId ?? 'custom'}>
+                        <strong>{rc.presetName}</strong> — {rc.architectures.map((a) => ARCH_LABEL[a] ?? a).join(' + ')} · {rc.epochs}{' '}
+                        epochs
+                        {rc.thresholdEsr != null ? ` · ESR ≤ ${rc.thresholdEsr}` : ''}
+                        {rc.latency != null ? ` · latency ${rc.latency}` : ' · latency auto'}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
+                      Architecture
+                      <select
+                        value={architecture}
+                        onChange={(e) => setArchitecture(e.target.value)}
+                        className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+                      >
+                        {TRAINER_ARCHITECTURES.map((a) => (
+                          <option key={a} value={a}>
+                            {ARCH_LABEL[a] ?? a}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="flex flex-col gap-1 text-[11px] text-nm-text-3">
+                      Epochs
+                      <input
+                        type="number"
+                        min={1}
+                        value={epochs}
+                        onChange={(e) => setEpochs(Math.max(1, Number(e.target.value) || 1))}
+                        className="px-2 py-1 text-xs rounded border border-field-bd bg-field-bg text-nm-text"
+                      />
+                    </label>
+                  </>
+                )}
 
                 <div className="flex flex-col gap-1 text-[11px] text-nm-text-3">
                   Model output folder
@@ -3933,8 +4070,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 capture={selectedCapture}
                 projectId={detail?.projectId ?? ''}
                 outputRoot={outputRoot}
-                architecture={architecture}
-                epochs={epochs}
+                recipeSummary={recipeSummary}
                 onBack={() => setSelectedCaptureId(null)}
                 onReveal={(p) => window.api.revealFile(p)}
                 onOpen={(p) => void window.api.openFile(p)}
@@ -4016,12 +4152,9 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   }
                   setQueueing(true)
                   try {
-                    const res = await window.api.enqueueNamCaptureImport({
-                                            pythonPath: settings.namPythonPath.trim() || undefined, // this shell never mounts App, which is what pushes it to the trainer
+                    const res = await enqueueRecipes({
                       captures: eligible.map((c) => toBatchItem(c, d.name)),
                       finalModelRoot: root,
-                      architecture,
-                      epochs,
                       includeSynthetic: true,
                       staged: true,
                       submissionLabel: `${d.name} — ${eligible.length} untrained`

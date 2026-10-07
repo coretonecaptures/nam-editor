@@ -893,6 +893,14 @@ declare global {
         pythonPath?: string
         finalModelRoot: string
         architecture: string
+        // A Training Preset's recipe; absent = the single-architecture call.
+        architectures?: string[]
+        savePlot?: boolean
+        ignoreChecks?: boolean
+        presetId?: string | null
+        presetName?: string | null
+        thresholdEsr?: number | null
+        latency?: number | null
         epochs: number
         thresholdEsr?: number | null
         latency?: number | null

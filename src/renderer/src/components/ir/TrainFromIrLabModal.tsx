@@ -70,8 +70,7 @@ function fileName(p: string): string {
 export function TrainFromIrLabModal({
   request,
   outputRoot,
-  architectureLabel,
-  epochs,
+  recipeSummary,
   busy,
   error,
   onChooseOutput,
@@ -80,8 +79,7 @@ export function TrainFromIrLabModal({
 }: {
   request: TrainReviewRequest
   outputRoot: string
-  architectureLabel: string
-  epochs: number
+  recipeSummary: string
   busy: boolean
   error?: string | null
   onChooseOutput: () => void
@@ -216,7 +214,7 @@ export function TrainFromIrLabModal({
 
         <div className="px-4 py-2 border-t border-nm-border-s flex items-center gap-2 text-[11px] text-nm-text-3">
           <span className="truncate">
-            {architectureLabel} · {epochs} epochs · saves to{' '}
+            {recipeSummary} · saves to{' '}
             {outputRoot ? <span title={outputRoot}>{fileName(outputRoot)}</span> : <span className="text-amber-400">no folder yet</span>}
           </span>
           <button onClick={onChooseOutput} disabled={busy} className="ml-auto shrink-0 text-nm-accent hover:underline disabled:opacity-50">
