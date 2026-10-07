@@ -817,7 +817,15 @@ function normalizePresetList<T extends { id?: unknown; name?: unknown; settings?
   )
 }
 
+// The newest settings this renderer has saved. window.api.initialSettings is read ONCE by the preload at launch and never
+// refreshed, but each workspace (NAM / IR / NAM Projects) is a separate component that calls loadSettings() on mount: a mode
+// switch after a save used to hand the new workspace the launch-time snapshot, whose first save wrote it straight back over
+// the file -- reverting whatever had just been entered (reproduced: Python path saved in NAM Projects, then switching to NAM
+// restored ''). Anything saved this session wins over the launch snapshot.
+let latestSavedSettings: AppSettings | null = null
+
 export function loadSettings(): AppSettings {
+  if (latestSavedSettings) return normalizeSettingsMetadataRules({ ...DEFAULT_SETTINGS, ...latestSavedSettings })
   try {
     // Primary: settings.json in userData (survives app updates/reinstalls)
     const api = (window as Window & { api?: { initialSettings?: unknown; saveSettingsToFile?: (json: string) => void } }).api
@@ -847,6 +855,7 @@ export function loadSettings(): AppSettings {
 }
 
 export function saveSettings(settings: AppSettings): void {
+  latestSavedSettings = settings
   const json = JSON.stringify(settings)
   localStorage.setItem(STORAGE_KEY, json)
   try {
