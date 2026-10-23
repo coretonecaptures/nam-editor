@@ -995,6 +995,7 @@ declare global {
       reorderTrainerJob: (jobId: string, beforeJobId: string) => Promise<{ success: boolean; error?: string }>
       moveSubmissionBefore: (submissionId: string, beforeSubmissionId: string) => Promise<{ success: boolean; error?: string }>
       retryTrainerHistoryEntry: (historyId: string) => Promise<{ success: boolean; error?: string; queued?: number }>
+      retryNamCaptureHistory: (historyIds: string[], submissionLabel: string) => Promise<{ success: boolean; error?: string; queued: number; acceptedIds: string[] }>
       markHistoryRetried: (historyIds: string[]) => Promise<{ success: boolean }>
       clearSupersededQueueRows: (refs: Array<{ submissionId?: string | null; sourcePath: string; architecture: string }>) => Promise<{ success: boolean; removed: number }>
       onTrainerUpdate: (cb: (state: TrainerStateSnapshot) => void) => () => void

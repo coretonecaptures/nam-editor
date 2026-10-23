@@ -1592,7 +1592,28 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
   // Re-queue a set of history entries under a single new submission. Used by the per-entry retry
   // for profile-less manual batches AND by the History group-head "Retry failed / Retry batch" actions.
-  const handleRetryHistoryBatch = async (entries: TrainerHistoryEntry[], submissionLabel: string) => {
+  const handleRetryHistoryBatch = async (allEntries: TrainerHistoryEntry[], submissionLabel: string) => {
+    if (allEntries.length === 0) return
+    // IR Lab captures are rebuilt in the main process from their stored recipe (own DI, never
+    // normalised, provenance + write-back kept). Rebuilding them here used the global DI and the
+    // current normalisation preference, which can train the wrong excitation/recording mapping.
+    const namCaptureEntries = allEntries.filter((e) => e.sourceMode === 'nam-capture-import')
+    const entries = allEntries.filter((e) => e.sourceMode !== 'nam-capture-import')
+    if (namCaptureEntries.length > 0) {
+      const namResult = await window.api.retryNamCaptureHistory(
+        namCaptureEntries.map((e) => e.historyId),
+        submissionLabel
+      )
+      if (!namResult.success || namResult.error) {
+        setQueueActionError(namResult.error ?? 'Could not re-queue those IR Lab captures.')
+      } else {
+        setQueueActionError('')
+      }
+      if (entries.length === 0) {
+        if (namResult.success) setHistoryContextMenu(null)
+        return
+      }
+    }
     if (entries.length === 0) return
     const py = settings.namPythonPath.trim()
     if (!py) {
@@ -1675,6 +1696,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const result = await window.api.enqueueTrainerRuns(payloads, { staged: false })
     if (!result.success) {
       setQueueActionError(result.error ?? 'Could not re-queue that batch.')
+      return
+    }
+    // success with queued=0 means duplicate protection dropped everything: nothing was retried,
+    // so marking these retried and clearing their queue rows would erase outstanding failures.
+    if (!result.queued) {
+      setQueueActionError('Nothing was re-queued — those captures are already in the queue.')
       return
     }
     setQueueActionError('')

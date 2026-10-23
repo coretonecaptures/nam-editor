@@ -296,6 +296,35 @@ export interface TrainerQueueJob {
   namingTemplate?: string | null
 }
 
+/**
+ * Everything needed to re-run an IR Lab capture exactly as it was first submitted.
+ *
+ * An IR Lab capture trains its OWN excitation/recording pair, never normalised, and writes its
+ * result back to the capture. A history row alone only had the recording, so a retry rebuilt it
+ * with the global training DI, the current normalisation setting and none of the provenance —
+ * i.e. it could train the wrong mapping. Retries rebuild from this through the capture-import
+ * builder, and are refused when it's missing.
+ */
+export interface NamCaptureRetryRecipe {
+  excitationPath: string
+  finalModelRoot: string
+  captureId: string | null
+  captureName: string | null
+  projectName: string | null
+  captureFolderPath: string | null
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+  modeledBy: string | null
+  gearMake: string | null
+  gearModel: string | null
+  gearType: string | null
+  toneType: string | null
+  presetId: string | null
+  presetName: string | null
+  ignoreChecks: boolean
+  savePlot: boolean
+}
+
 export interface TrainerHistoryEntry {
   historyId: string
   timestamp: string
@@ -338,6 +367,8 @@ export interface TrainerHistoryEntry {
   // would have raised as an error if checks hadn't been bypassed.
   trainedDespiteWarnings?: boolean
   checkWarnings?: string
+  /** IR Lab captures only. Absent on rows written before it existed. */
+  namCaptureRecipe?: NamCaptureRetryRecipe
 }
 
 export type WatcherFileStatus = 'pending' | 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'skipped'

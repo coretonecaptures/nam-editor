@@ -15,6 +15,7 @@ import { parseNamLabUrl } from './namLabUrl'
 import { parseHandoffOp, writeHandoffReceipt } from './handoffReceipt'
 import { irLabAppDataDir } from './irLabStatus'
 import type { NamLabTrainIntent } from '../shared/namProjects'
+import type { NamCaptureRetryRecipe } from '../shared/trainer'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -1426,6 +1427,33 @@ interface TrainerHistoryEntry {
   trainedDespiteWarnings?: boolean
   checkWarnings?: string
   workspacePath?: string
+  /** IR Lab captures only — see NamCaptureRetryRecipe. */
+  namCaptureRecipe?: NamCaptureRetryRecipe
+  retriedAt?: string | null
+}
+
+/** The recipe an IR Lab job was built from, for its history row; undefined for any other job. */
+function namCaptureRecipeOf(job: TrainerQueueJob): NamCaptureRetryRecipe | undefined {
+  if (job.sourceMode !== 'nam-capture-import') return undefined
+  return {
+    excitationPath: job.inputPath,
+    finalModelRoot: job.finalModelRoot,
+    captureId: job.namCaptureId ?? null,
+    captureName: job.namCaptureName ?? null,
+    projectName: job.namProjectName ?? null,
+    captureFolderPath: job.namCaptureFolderPath ?? null,
+    inputLevelDbu: job.inputLevelDbu,
+    outputLevelDbu: job.outputLevelDbu,
+    modeledBy: job.namSuggestedModeledBy ?? job.modeledBy ?? null,
+    gearMake: job.namSuggestedGearMake ?? null,
+    gearModel: job.namSuggestedGearModel ?? null,
+    gearType: job.namSuggestedGearType ?? null,
+    toneType: job.namSuggestedToneType ?? null,
+    presetId: job.profileId,
+    presetName: job.profileName,
+    ignoreChecks: job.ignoreChecks,
+    savePlot: job.savePlot,
+  }
 }
 
 interface TrainerFailureLogEntry {
@@ -2286,8 +2314,8 @@ function saveTrainerQueue(): void {
     // Mirror the live queue 1:1 — staged, queued, running, AND finished/failed/canceled rows.
     // Finished rows are what the user sees as "what already ran in this session/batch"; dropping
     // them at save time silently wipes that context on every restart, which is the bug.
-    // Cap at TRAINER_QUEUE_PERSIST_CAP (most recent end of the array) so the file can't grow
-    // unbounded — older entries are in trainer-history.json regardless.
+    // Finished rows are capped (see getPersistableTrainerQueueJobs) so the file can't grow
+    // unbounded — older ones are in trainer-history.json regardless. Unfinished rows never are.
     // Persist the pause flag so auto-start-on-launch can respect it.
     const payload = { paused: trainerPauseAfterCurrent, jobs: getPersistableTrainerQueueJobs() }
     fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(payload, null, 2), 'utf-8')
@@ -2339,12 +2367,41 @@ function toSafeTimestampSegment(value: string): string {
   return new Date(ms).toISOString().replace(/[:.]/g, '-')
 }
 
+/** True when `child` resolves to `parent` itself or somewhere beneath it (case-insensitive on Windows). */
+function isPathInside(child: string, parent: string): boolean {
+  if (!child || !parent) return false
+  const fold = (p: string) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p))
+  const rel = relative(fold(parent), fold(child))
+  if (rel === '') return true
+  // Outside: climbs out (".."), or lands on another drive/root, where relative() returns an
+  // absolute path.
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !/^[a-zA-Z]:/.test(rel) && !rel.startsWith(sep)
+}
+
 function isTrainerQueueTerminalStatus(status: TrainerQueueJobStatus): boolean {
   return status === 'success' || status === 'error' || status === 'canceled'
 }
 
+/**
+ * What gets written to disk. The cap applies to TERMINAL rows only.
+ *
+ * A plain slice(-cap) dropped the FRONT of the queue — the oldest pending jobs, and potentially
+ * the active one — once it passed the cap, so a big batch silently lost work on restart, with no
+ * history row to recover it from. Unfinished and staged work is never dropped; only the oldest
+ * finished rows (whose permanent record is in history) make room. Queue order is preserved.
+ */
 function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
-  return trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP)
+  const terminalCount = trainerQueue.reduce((n, job) => n + (isTrainerQueueTerminalStatus(job.status) ? 1 : 0), 0)
+  const unfinishedCount = trainerQueue.length - terminalCount
+  let terminalToDrop = Math.max(0, terminalCount - Math.max(0, TRAINER_QUEUE_PERSIST_CAP - unfinishedCount))
+  if (terminalToDrop === 0) return trainerQueue.slice()
+  return trainerQueue.filter((job) => {
+    if (terminalToDrop > 0 && isTrainerQueueTerminalStatus(job.status)) {
+      terminalToDrop--
+      return false
+    }
+    return true
+  })
 }
 
 // A batch (submission) leaves the active queue once every one of its non-staged jobs is terminal.
@@ -2525,6 +2582,7 @@ function appendTrainerCanceledHistory(
     submissionLabel: job.submissionLabel,
     submissionCreatedAt: job.submissionCreatedAt,
     workspacePath: job.workspacePath,
+    namCaptureRecipe: namCaptureRecipeOf(job),
   })
 }
 
@@ -3817,6 +3875,131 @@ async function buildTrainerPayloadsForNamCaptureImport(
   return payloads
 }
 
+/**
+ * Rebuild IR Lab history rows for retry, through the same builder an original submission uses.
+ *
+ * So a retry trains the capture's own excitation/recording pair, never normalised, with its
+ * provenance and write-back intact. Rows that predate the stored recipe, or whose pair is gone
+ * from disk, are refused with a reason rather than silently rebuilt against the global DI.
+ */
+async function buildNamCaptureRetryPayloads(
+  entries: TrainerHistoryEntry[],
+  submission: { id: string; label: string; createdAt: string }
+): Promise<{ payloads: TrainerStartPayload[]; acceptedIds: string[]; refused: string[] }> {
+  const payloads: TrainerStartPayload[] = []
+  const acceptedIds: string[] = []
+  const refused: string[] = []
+  if (!trainerConfiguredPythonPath) {
+    return { payloads, acceptedIds, refused: entries.map((e) => `${e.finalModelName}: the NAM Python path is not configured`) }
+  }
+  for (const entry of entries) {
+    const recipe = entry.namCaptureRecipe
+    const name = entry.finalModelName || basename(entry.sourcePath)
+    if (!recipe?.excitationPath) {
+      refused.push(`${name}: this run predates stored capture details — retrain it from its IR Lab project instead`)
+      continue
+    }
+    const built = await buildTrainerPayloadsForNamCaptureImport(
+      [{
+        excitationPath: recipe.excitationPath,
+        recordingPath: entry.sourcePath,
+        captureId: recipe.captureId ?? '',
+        captureName: recipe.captureName ?? '',
+        captureFolderPath: recipe.captureFolderPath ?? '',
+        projectName: recipe.projectName ?? '',
+        // It trained before, so whatever it is, it's meant to train; the synthetic filter
+        // belongs to the original selection, not a retry.
+        synthetic: false,
+        inputLevelDbu: recipe.inputLevelDbu,
+        outputLevelDbu: recipe.outputLevelDbu,
+        suggested: {
+          modeledBy: recipe.modeledBy,
+          gearMake: recipe.gearMake,
+          gearModel: recipe.gearModel,
+          gearType: recipe.gearType,
+          toneType: recipe.toneType,
+        },
+      }],
+      {
+        pythonPath: trainerConfiguredPythonPath,
+        finalModelRoot: recipe.finalModelRoot,
+        architecture: entry.architecture,
+        epochs: entry.epochs,
+        thresholdEsr: entry.thresholdEsr,
+        latency: entry.latencyMode === 'manual' ? entry.latencyValue : null,
+        savePlot: recipe.savePlot,
+        ignoreChecks: recipe.ignoreChecks,
+        presetId: recipe.presetId,
+        presetName: recipe.presetName,
+        includeSynthetic: true,
+        submission,
+      }
+    )
+    if (built.length === 0) {
+      refused.push(`${name}: its excitation or recording WAV is no longer on disk`)
+      continue
+    }
+    // Protect a previously successful model of the same name, as every other History retry does.
+    for (const payload of built) payloads.push({ ...payload, backupExisting: true })
+    acceptedIds.push(entry.historyId)
+  }
+  return { payloads, acceptedIds, refused }
+}
+
+/**
+ * Enqueue IR Lab history retries and mark only what was actually accepted.
+ *
+ * Marking retried / clearing superseded rows happens here, per accepted entry, rather than in the
+ * renderer after a blanket "success": duplicate protection can accept zero of them.
+ */
+async function retryNamCaptureHistory(
+  entries: TrainerHistoryEntry[],
+  label: string
+): Promise<{ success: boolean; queued: number; error?: string; acceptedIds: string[] }> {
+  if (entries.length === 0) return { success: false, queued: 0, error: 'No IR Lab history rows to retry.', acceptedIds: [] }
+  const submission = { id: crypto.randomUUID(), label, createdAt: new Date().toISOString() }
+  const { payloads, acceptedIds, refused } = await buildNamCaptureRetryPayloads(entries, submission)
+  const queued = payloads.length > 0 ? await enqueueTrainingPayloads(payloads) : 0
+  // enqueueTrainingPayloads drops duplicates of already-queued work; only rows with a job in the
+  // new submission count as retried.
+  const inNewSubmission = new Set(
+    trainerQueue
+      .filter((job) => job.submissionId === submission.id)
+      .map((job) => `${normalizePath(job.outputPath)} ${job.architecture}`)
+  )
+  const accepted = entries.filter(
+    (e) => acceptedIds.includes(e.historyId) && inNewSubmission.has(`${normalizePath(e.sourcePath)} ${e.architecture}`)
+  )
+  if (accepted.length > 0) {
+    const now = new Date().toISOString()
+    for (const entry of accepted) entry.retriedAt = now
+    saveTrainerHistory()
+    emitTrainerHistory()
+    const supersededKeys = new Set(
+      accepted.map((e) => `${e.submissionId ?? ''} ${normalizePath(e.sourcePath)} ${e.architecture}`)
+    )
+    const activeId = trainerState.activeJobId
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) =>
+      job.jobId === activeId ||
+      !isTrainerQueueTerminalStatus(job.status) ||
+      !supersededKeys.has(`${job.submissionId ?? ''} ${normalizePath(job.outputPath)} ${job.architecture}`)
+    )
+    if (trainerQueue.length !== before) {
+      pruneFinishedBatchesFromQueue()
+      emitTrainerState()
+    }
+  }
+  const problems = [...refused]
+  if (queued === 0 && refused.length === 0) problems.push('Those captures are already queued.')
+  return {
+    success: queued > 0,
+    queued,
+    acceptedIds: accepted.map((e) => e.historyId),
+    error: problems.length > 0 ? problems.join('\n') : undefined,
+  }
+}
+
 function buildTrainerPayloadFromHistoryEntryFallback(
   entry: TrainerHistoryEntry,
   pythonPath: string,
@@ -4121,26 +4304,31 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     stderrRemainder = consumeTrainerChunk(stderrRemainder, chunk)
   })
 
-  trainerChild.once('error', async (error) => {
-    stopCheckpointPoll()
-    trainerState = {
-      ...trainerState,
-      status: 'error',
-      finishedAt: new Date().toISOString(),
-      error: String(error),
-    }
-    trainerChild = null
+  // ONE finalizer per attempt. A failed launch emits 'error' and then (usually) 'close'; the
+  // error handler used to null the child and pump the next job itself, after which this run's
+  // late 'close' still ran the full finalizer against the NEXT run's global state — clearing its
+  // child handle, stopping its checkpoint poll and writing its ESR into this job's history.
+  // Now 'error' only records why, and whichever of close/fallback comes first finalizes.
+  let finalized = false
+  let finalizeFallback: ReturnType<typeof setTimeout> | null = null
+  const finalizeOnce = (code: number | null, signal: NodeJS.Signals | null): void => {
+    if (finalized) return
+    finalized = true
+    if (finalizeFallback) clearTimeout(finalizeFallback)
+    void finalizeAttempt(code, signal)
+  }
+
+  trainerChild.once('error', (error) => {
+    if (finalized) return
+    trainerState = { ...trainerState, error: String(error) }
     emitTrainerState()
-    if (!trainerPauseAfterCurrent) {
-      // Honor an explicit user promotion: pump in pure queue order instead of sticking to
-      // this job's batch (see trainerStickyPreferenceCleared).
-      const preferred = trainerStickyPreferenceCleared ? null : job.submissionId
-      trainerStickyPreferenceCleared = false
-      await pumpTrainerQueue(preferred)
-    }
+    // Node doesn't guarantee 'close' after a spawn failure; don't let the queue stall on it.
+    finalizeFallback = setTimeout(() => finalizeOnce(null, null), 3000)
   })
 
-  trainerChild.once('close', async (code, signal) => {
+  trainerChild.once('close', (code, signal) => finalizeOnce(code, signal))
+
+  async function finalizeAttempt(code: number | null, signal: NodeJS.Signals | null): Promise<void> {
     stopCheckpointPoll()
     if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
     if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
@@ -4426,7 +4614,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
     }
 
-    if (wasCanceled && trainerState.outputModelPath) {
+    // Only a file inside THIS attempt's workspace can be this attempt's partial output. Until
+    // Python reports NAM_LAB_RESULT, outputModelPath is still the intended FINAL destination —
+    // where an existing model of the same name may well live — and cancelling deleted it.
+    if (wasCanceled && trainerState.outputModelPath && isPathInside(trainerState.outputModelPath, job.trainPath)) {
       try {
         if (fs.existsSync(trainerState.outputModelPath)) {
           suppressWatcher()
@@ -4454,7 +4645,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       processedWavPath,
       graphPath: promotedGraphPath,
       status: effectiveFinalStatus === 'success' ? 'success' : effectiveFinalStatus === 'error' ? 'error' : 'canceled',
-      attempts: job.attempts,
+      // `job` is the object from before startTrainerJob bumped the count in the queue.
+      attempts: job.attempts + 1,
       validationEsr: trainerState.validationEsr,
       thresholdEsr: job.thresholdEsr,
       epochs: job.epochs,
@@ -4472,6 +4664,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       trainedDespiteWarnings: effectiveFinalStatus === 'success' && !!trainerState.checkWarnings,
       checkWarnings: trainerState.checkWarnings || undefined,
       workspacePath: job.workspacePath,
+      namCaptureRecipe: namCaptureRecipeOf(job),
     })
 
     if (effectiveFinalStatus === 'error') {
@@ -4500,7 +4693,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       trainerState = { ...trainerState, status: 'idle', activeJobId: null, runId: null, progressPhase: 'Paused — click Resume to continue' }
       emitTrainerState()
     }
-  })
+  }
 }
 
 async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<void> {
@@ -4537,7 +4730,13 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
       finishedAt: new Date().toISOString(),
       error: failureReason,
     })
-    appendTrainerCanceledHistory(nextJob, failureReason, '', 'error')
+    // The queue copy, not `nextJob`: startTrainerJob already bumped attempts on it.
+    appendTrainerCanceledHistory(
+      trainerQueue.find((queued) => queued.jobId === nextJob.jobId) ?? nextJob,
+      failureReason,
+      '',
+      'error'
+    )
     try {
       await recordTrainerFailureSnapshot(nextJob, failureReason, [])
     } catch (snapshotError) {
@@ -8751,6 +8950,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:retryHistoryEntry', async (_event, historyId: string) => {
     const entry = trainerHistory.find((item) => item.historyId === historyId)
     if (!entry) return { success: false, error: 'Training history entry not found.' }
+    // IR Lab rows carry a preset id in profileId, which used to send them down the watcher-profile
+    // path below and rebuild them against the global DI. They have their own recipe.
+    if (entry.sourceMode === 'nam-capture-import') return retryNamCaptureHistory([entry], `Retry - ${entry.finalModelName || 'capture'}`)
     if (!entry.profileId) return { success: false, error: 'Only profile-backed watcher or folder runs can be retried from history right now.' }
     const profile = trainingProfiles.find((item) => item.id === entry.profileId)
     if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
@@ -8785,6 +8987,13 @@ app.whenReady().then(async () => {
       emitTrainerHistory()
     }
     return { success: queued > 0, queued, error: queued > 0 ? undefined : 'That retry did not add a new queue item.' }
+  })
+
+  ipcMain.handle('trainer:retryNamCaptureHistory', async (_event, historyIds: string[], submissionLabel: string) => {
+    if (!Array.isArray(historyIds) || historyIds.length === 0) return { success: false, error: 'Nothing to retry.' }
+    const ids = new Set(historyIds)
+    const entries = trainerHistory.filter((e) => ids.has(e.historyId) && e.sourceMode === 'nam-capture-import')
+    return retryNamCaptureHistory(entries, typeof submissionLabel === 'string' && submissionLabel ? submissionLabel : 'Retry')
   })
 
   ipcMain.handle('trainer:markHistoryRetried', async (_event, historyIds: string[]) => {

@@ -304,6 +304,8 @@ const api = {
     ipcRenderer.invoke('trainer:dismissBatch', submissionId),
   retryTrainerHistoryEntry: (historyId: string): Promise<{ success: boolean; error?: string; queued?: number }> =>
     ipcRenderer.invoke('trainer:retryHistoryEntry', historyId),
+  retryNamCaptureHistory: (historyIds: string[], submissionLabel: string): Promise<{ success: boolean; error?: string; queued: number; acceptedIds: string[] }> =>
+    ipcRenderer.invoke('trainer:retryNamCaptureHistory', historyIds, submissionLabel),
   markHistoryRetried: (historyIds: string[]): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('trainer:markHistoryRetried', historyIds),
   clearSupersededQueueRows: (refs: Array<{ submissionId?: string | null; sourcePath: string; architecture: string }>): Promise<{ success: boolean; removed: number }> =>
