@@ -69,9 +69,9 @@ export default function AppRoot(): React.ReactElement {
   // IR Lab's button looking broken (its receipt had already said "received").
   useEffect(() => onGoToNamProject(() => setMode('nam-projects')), [])
   useEffect(() => {
-    const unsubscribe = window.api.onNamLabOpenProject((projectId) => goToNamProject(projectId))
-    window.api.getPendingNamLabProject().then((projectId) => {
-      if (projectId) goToNamProject(projectId)
+    const unsubscribe = window.api.onNamLabOpenProject((p) => goToNamProject(p.id, p.projectFolder))
+    window.api.getPendingNamLabProject().then((p) => {
+      if (p) goToNamProject(p.id, p.projectFolder)
     })
     return unsubscribe
   }, [])

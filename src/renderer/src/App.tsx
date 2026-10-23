@@ -955,8 +955,8 @@ declare global {
       cleanOutdatedNamBot: (filePaths: string[]) => Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]>
       getPendingFiles: () => Promise<string[]>
       onOpenFiles: (cb: (paths: string[]) => void) => () => void
-      getPendingNamLabProject: () => Promise<string | null>
-      onNamLabOpenProject: (cb: (projectId: string) => void) => () => void
+      getPendingNamLabProject: () => Promise<{ id: string; projectFolder: string | null } | null>
+      onNamLabOpenProject: (cb: (project: { id: string; projectFolder: string | null }) => void) => () => void
       getPendingNamLabTrain: () => Promise<NamLabTrainIntent | null>
       getPendingNamLabLibrary: () => Promise<string | null>
       onNamLabOpenLibrary: (cb: (folderPath: string) => void) => () => void

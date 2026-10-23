@@ -162,9 +162,10 @@ const api = {
   cleanOutdatedNamBot: (filePaths: string[]): Promise<{ filePath: string; success: boolean; error?: string; changed?: boolean }[]> =>
     ipcRenderer.invoke('file:cleanOutdatedNamBot', filePaths),
   getPendingFiles: (): Promise<string[]> => ipcRenderer.invoke('app:getPendingFiles'),
-  getPendingNamLabProject: (): Promise<string | null> => ipcRenderer.invoke('app:getPendingNamLabProject'),
-  onNamLabOpenProject: (cb: (projectId: string) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, projectId: string) => cb(projectId)
+  getPendingNamLabProject: (): Promise<{ id: string; projectFolder: string | null } | null> =>
+    ipcRenderer.invoke('app:getPendingNamLabProject'),
+  onNamLabOpenProject: (cb: (project: { id: string; projectFolder: string | null }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, project: { id: string; projectFolder: string | null }) => cb(project)
     ipcRenderer.on('namlab:openProject', handler)
     return () => ipcRenderer.removeListener('namlab:openProject', handler)
   },

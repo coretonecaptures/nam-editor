@@ -5,7 +5,7 @@
  * `index.ts` wires the result into window focus + appNav's cross-mode nav.
  */
 export type NamLabUrl =
-  | { route: 'project'; id: string }
+  | { route: 'project'; id: string; projectFolder: string | null }
   /** IR Lab's "Train in NAM Lab": `namlab://train?project=<id>&capture=<id>&capture=...`, or
    * `&scope=untrained` for every capture NAM Lab's own result files say is untrained. Never
    * auto-runs anything — NAM Lab opens a review dialog first. */
@@ -28,7 +28,9 @@ export function parseNamLabUrl(urlString: string): NamLabUrl | null {
   const route = url.hostname
   if (route === 'project') {
     const id = url.searchParams.get('id')
-    return id ? { route: 'project', id } : null
+    // `path` = the IR Lab project folder (sent since 2026-10-23), so a project this app has never
+    // scanned can be added on the spot, as on train links.
+    return id ? { route: 'project', id, projectFolder: url.searchParams.get('path') || null } : null
   }
   if (route === 'train') {
     const projectId = url.searchParams.get('project')

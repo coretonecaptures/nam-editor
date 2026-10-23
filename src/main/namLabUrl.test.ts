@@ -3,7 +3,8 @@ import { parseNamLabUrl } from './namLabUrl'
 
 describe('parseNamLabUrl', () => {
   it('parses a real project deep link from IR Lab', () => {
-    expect(parseNamLabUrl('namlab://project?id=abc-123')).toEqual({ route: 'project', id: 'abc-123' })
+    expect(parseNamLabUrl('namlab://project?id=abc-123')).toEqual({ route: 'project', id: 'abc-123', projectFolder: null })
+    expect(parseNamLabUrl('namlab://project?id=abc-123&path=%2FUsers%2Fa%2FTwo%20Rock')).toEqual({ route: 'project', id: 'abc-123', projectFolder: '/Users/a/Two Rock' })
   })
 
   it('rejects a non-namlab protocol', () => {

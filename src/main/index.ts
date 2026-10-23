@@ -23,7 +23,7 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 // handed it via second-instance). Consumed once ready-to-show fires — see createWindow() below —
 // same "hold the intent until the window can act on it" shape as appNav.ts's renderer-side
 // pendingSection, just on the main-process side of the same problem.
-let pendingNamLabProjectId: string | null = null
+let pendingNamLabProject: { id: string; projectFolder: string | null } | null = null
 let pendingNamLabTrain: NamLabTrainIntent | null = null
 let pendingNamLabLibrary: string | null = null
 // True once the current window's renderer has pulled its pending links, i.e. its namlab:*
@@ -53,8 +53,9 @@ function handleNamLabUrl(urlString: string): void {
   // Push only to a renderer that is listening; otherwise park the link for its first pull.
   const live = window && namLabRendererReady ? window : null
   if (parsed.route === 'project') {
-    if (live) live.webContents.send('namlab:openProject', parsed.id)
-    else pendingNamLabProjectId = parsed.id
+    const project = { id: parsed.id, projectFolder: parsed.projectFolder }
+    if (live) live.webContents.send('namlab:openProject', project)
+    else pendingNamLabProject = project
     receipt('project', true, 'received')
     return
   }
@@ -8288,9 +8289,9 @@ app.whenReady().then(async () => {
   // race React's subscription on first launch.
   ipcMain.handle('app:getPendingNamLabProject', () => {
     namLabRendererReady = true
-    const id = pendingNamLabProjectId
-    pendingNamLabProjectId = null
-    return id
+    const project = pendingNamLabProject
+    pendingNamLabProject = null
+    return project
   })
 
   // Same pull model for IR Lab's namlab://library?path=... ("Open NAM library in NAM Lab").

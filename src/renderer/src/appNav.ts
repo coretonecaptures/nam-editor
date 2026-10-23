@@ -61,6 +61,7 @@ export function consumePendingTrainingNav(): TrainingNavSection | null {
  * to NAM Projects mode and NamProjectsShell can select the right project on mount.
  */
 let pendingNamProjectId: string | null = null
+let pendingNamProjectFolder: string | null = null
 const namProjectListeners = new Set<() => void>()
 
 // NamProjectsShell's own subscription: a deep link that arrives while the shell is ALREADY
@@ -99,8 +100,9 @@ function notifyNamProjectListeners(): void {
 }
 
 /** Called from App.tsx's main-process listener once a namlab:// URL resolves to a project id. */
-export function goToNamProject(projectId: string): void {
+export function goToNamProject(projectId: string, projectFolder: string | null = null): void {
   pendingNamProjectId = projectId
+  pendingNamProjectFolder = projectFolder
   notifyNamProjectListeners()
 }
 
@@ -140,8 +142,9 @@ export function consumePendingNamLibraryNav(): string | null {
 }
 
 /** NamProjectsShell calls this once on mount; returns the project id to open, or null. One-shot. */
-export function consumePendingNamProjectNav(): string | null {
-  const v = pendingNamProjectId
+export function consumePendingNamProjectNav(): { id: string; projectFolder: string | null } | null {
+  const v = pendingNamProjectId ? { id: pendingNamProjectId, projectFolder: pendingNamProjectFolder } : null
   pendingNamProjectId = null
+  pendingNamProjectFolder = null
   return v
 }

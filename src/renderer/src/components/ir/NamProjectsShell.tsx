@@ -2663,8 +2663,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   )
 
   const handleProjectIntent = useCallback(
-    async (irLabProjectId: string) => {
-      const project = await findIrLabProject(irLabProjectId, null)
+    async (irLabProjectId: string, projectFolder: string | null) => {
+      // With the folder (IR Lab sends it since 2026-10-23) an unscanned project can be added on
+      // the spot, the same offer the train link makes.
+      const project = await findIrLabProject(irLabProjectId, projectFolder)
       if (project) {
         setSelectedId(project.collectionId)
         setView('overview')
@@ -2679,8 +2681,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   // shell is already showing — consume-on-mount alone silently dropped the second case.
   useEffect(() => {
     const consume = (): void => {
-      const projectId = consumePendingNamProjectNav()
-      if (projectId) void handleProjectIntent(projectId)
+      const project = consumePendingNamProjectNav()
+      if (project) void handleProjectIntent(project.id, project.projectFolder)
       const train = consumePendingNamTrainNav()
       if (train) void handleTrainIntent(train)
     }
