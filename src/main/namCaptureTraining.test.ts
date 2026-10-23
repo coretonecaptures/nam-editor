@@ -189,6 +189,12 @@ describe('findModelNameConflicts', () => {
     expect(out[0].historyMatch?.finalModelPath).toBe('/models/clean ch1 (1).nam')
   })
 
+  it('finds an existing model in an architecture sub-folder (multi-architecture presets write there)', () => {
+    const existing = new Set(['/out/lite/Lead.nam'])
+    const out = findModelNameConflicts([cap('a', 'Lead')], '/out', [], (p) => existing.has(p.replace(/\\/g, '/')), () => ['standard', 'lite'])
+    expect(out[0]?.existingFilePath?.replace(/\\/g, '/')).toBe('/out/lite/Lead.nam')
+  })
+
   it('ignores failed runs and unrelated names', () => {
     expect(findModelNameConflicts([cap('a', 'Clean')], '', [hist('Clean', 'error'), hist('Crunch')], () => false)).toEqual([])
   })

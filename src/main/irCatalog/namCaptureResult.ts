@@ -26,7 +26,7 @@ export interface NamLabResult {
   schemaVersion: number
   trainedAt: string
   modelName: string
-  architecture: string // 'a1' | 'a2' in practice, stored verbatim
+  architecture: string // the trainer architecture id ('standard', 'lite', 'a2', ...); 'a1'/'a2' in older files
   validationEsr: number | null
   /** A2 only — the Full (channels_8) and Lite (channels_3) sub-model ESRs. */
   validationEsrFull: number | null
@@ -38,6 +38,19 @@ export interface NamLabResult {
   /** The IR Lab capture id this model was trained from — also embedded in the .nam's
    * metadata.nam_lab.source_capture_id, so a future model-library scan can match by id. */
   sourceCaptureId: string | null
+  /** Every model trained from this capture, one per architecture (2026-10-23). The top-level
+   * fields are the most recent one, which is all IR Lab reads; before this a preset that trains
+   * several architectures left only the last to finish on record. Absent in older files. */
+  models?: NamLabResultModel[]
+}
+
+export interface NamLabResultModel {
+  architecture: string
+  modelName: string
+  outputModelPath: string
+  validationEsr: number | null
+  trainedAt: string
+  trainerJobId: string
 }
 
 /** `<dir>/<CaptureName>.nam-lab-result.json` for a given recording WAV path. */
@@ -65,30 +78,64 @@ export function readNamLabResult(recordingWavPath: string): NamLabResult | null 
       outputModelPath: parsed.outputModelPath ?? '',
       graphPath: typeof parsed.graphPath === 'string' && parsed.graphPath ? parsed.graphPath : null,
       trainerJobId: parsed.trainerJobId ?? '',
-      sourceCaptureId: typeof parsed.sourceCaptureId === 'string' && parsed.sourceCaptureId ? parsed.sourceCaptureId : null
+      sourceCaptureId: typeof parsed.sourceCaptureId === 'string' && parsed.sourceCaptureId ? parsed.sourceCaptureId : null,
+      models: Array.isArray(parsed.models) ? parsed.models.filter(isModelEntry) : undefined
     }
   } catch {
     return null
   }
 }
 
-/** Writes (or overwrites) the sidecar beside the recording WAV. The v2 fields
- * (validationEsrFull/Lite, graphPath, sourceCaptureId) are optional and default to null.
- * Best-effort: a failure here must never fail the training run that produced the model. */
+function isModelEntry(v: unknown): v is NamLabResultModel {
+  if (typeof v !== 'object' || v === null) return false
+  const m = v as Record<string, unknown>
+  return typeof m.architecture === 'string' && typeof m.outputModelPath === 'string'
+}
+
+/** Temp file + rename, so IR Lab (which reads this to show TRAINED) never sees half a file. */
+function writeAtomically(path: string, text: string): void {
+  const tmp = `${path}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, text, 'utf8')
+  fs.renameSync(tmp, path)
+}
+
+/** Writes the sidecar beside the recording WAV. The v2 fields (validationEsrFull/Lite, graphPath,
+ * sourceCaptureId) are optional and default to null. The top level is this run; `models` keeps
+ * one entry per architecture from earlier runs of the SAME capture (a different capture id, e.g.
+ * a re-take reusing the file name, starts the list over). Best-effort: a failure here must never
+ * fail the training run that produced the model. */
 export function writeNamLabResult(
   recordingWavPath: string,
-  result: Omit<NamLabResult, 'schemaVersion' | 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId'> &
+  result: Omit<NamLabResult, 'schemaVersion' | 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId' | 'models'> &
     Partial<Pick<NamLabResult, 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId'>>
 ): void {
+  const previous = readNamLabResult(recordingWavPath)
+  const sameCapture = previous != null && previous.sourceCaptureId === (result.sourceCaptureId ?? null)
+  const earlier: NamLabResultModel[] = !sameCapture
+    ? []
+    : previous.models ??
+      (previous.outputModelPath
+        ? [{ architecture: previous.architecture, modelName: previous.modelName, outputModelPath: previous.outputModelPath,
+             validationEsr: previous.validationEsr, trainedAt: previous.trainedAt, trainerJobId: previous.trainerJobId }]
+        : [])
+  const current: NamLabResultModel = {
+    architecture: result.architecture,
+    modelName: result.modelName,
+    outputModelPath: result.outputModelPath,
+    validationEsr: result.validationEsr,
+    trainedAt: result.trainedAt,
+    trainerJobId: result.trainerJobId
+  }
   const payload: NamLabResult = {
     schemaVersion: NAM_LAB_RESULT_SCHEMA_VERSION,
     validationEsrFull: null,
     validationEsrLite: null,
     graphPath: null,
     sourceCaptureId: null,
-    ...result
+    ...result,
+    models: [...earlier.filter((m) => m.architecture !== current.architecture), current]
   }
-  fs.writeFileSync(namLabResultPathFor(recordingWavPath), JSON.stringify(payload, null, 2) + '\n', 'utf8')
+  writeAtomically(namLabResultPathFor(recordingWavPath), JSON.stringify(payload, null, 2) + '\n')
 }
 
 /** Point an existing result sidecar at a moved/renamed .nam. Returns the updated result, or null
@@ -96,7 +143,11 @@ export function writeNamLabResult(
 export function relinkNamLabResult(recordingWavPath: string, newOutputModelPath: string): NamLabResult | null {
   const current = readNamLabResult(recordingWavPath)
   if (!current) return null
-  const updated: NamLabResult = { ...current, outputModelPath: newOutputModelPath }
-  fs.writeFileSync(namLabResultPathFor(recordingWavPath), JSON.stringify(updated, null, 2) + '\n', 'utf8')
+  const updated: NamLabResult = {
+    ...current,
+    outputModelPath: newOutputModelPath,
+    models: current.models?.map((m) => (m.outputModelPath === current.outputModelPath ? { ...m, outputModelPath: newOutputModelPath } : m))
+  }
+  writeAtomically(namLabResultPathFor(recordingWavPath), JSON.stringify(updated, null, 2) + '\n')
   return updated
 }

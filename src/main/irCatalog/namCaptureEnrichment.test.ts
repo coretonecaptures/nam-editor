@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
 import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults, trainableInputLevelDbu } from './namCaptureEnrichment'
-import { writeNamLabResult, namLabResultPathFor } from './namCaptureResult'
+import { writeNamLabResult, namLabResultPathFor, readNamLabResult } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
 const tmpDirs: string[] = []
@@ -597,5 +597,23 @@ describe('readiness and project membership follow IR Lab (2026-10-23)', () => {
     fs.rmSync(moved)
     enrichNamCaptures(db, stats.libraryRootId)
     expect(countIn('Amp B')).toBe(2)
+  })
+})
+
+describe('nam-lab-result.json with several architectures (2026-10-23)', () => {
+  it('keeps one model per architecture for the same capture; a different capture starts over', () => {
+    const dir = makeTmpDir()
+    const rec = join(dir, 'Clean.wav')
+    const base = { trainedAt: '2026-10-23T00:00:00Z', modelName: 'Clean', validationEsr: 0.01, sourceCaptureId: 'cap1' }
+    writeNamLabResult(rec, { ...base, architecture: 'standard', outputModelPath: '/m/standard/Clean.nam', trainerJobId: 'j1' })
+    writeNamLabResult(rec, { ...base, architecture: 'lite', outputModelPath: '/m/lite/Clean.nam', trainerJobId: 'j2' })
+    writeNamLabResult(rec, { ...base, architecture: 'standard', outputModelPath: '/m/standard/Clean (1).nam', trainerJobId: 'j3' })
+    const r = readNamLabResult(rec)!
+    expect(r.outputModelPath).toBe('/m/standard/Clean (1).nam') // top level = latest, what IR Lab reads
+    expect(r.models?.map((m) => `${m.architecture}:${m.outputModelPath}`)).toEqual(['lite:/m/lite/Clean.nam', 'standard:/m/standard/Clean (1).nam'])
+
+    writeNamLabResult(rec, { ...base, sourceCaptureId: 'cap2', architecture: 'lite', outputModelPath: '/m/lite/Clean.nam', trainerJobId: 'j4' })
+    expect(readNamLabResult(rec)!.models).toHaveLength(1)
+    expect(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
 })

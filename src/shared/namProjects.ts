@@ -16,6 +16,19 @@ export interface NamLabResult {
   graphPath: string | null
   trainerJobId: string
   sourceCaptureId: string | null
+  /** Every model trained from this capture, one per architecture (2026-10-23). The top-level
+   * fields are the most recent one, which is all IR Lab reads; before this a preset that trains
+   * several architectures left only the last to finish on record. Absent in older files. */
+  models?: NamLabResultModel[]
+}
+
+export interface NamLabResultModel {
+  architecture: string
+  modelName: string
+  outputModelPath: string
+  validationEsr: number | null
+  trainedAt: string
+  trainerJobId: string
 }
 
 export interface NamCaptureSuggestedMetadata {

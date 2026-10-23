@@ -4693,7 +4693,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           writeNamLabResult(job.outputPath, {
             trainedAt: trainerState.finishedAt ?? new Date().toISOString(),
             modelName: job.modelName,
-            architecture: job.namMode,
+            // The real architecture id: with several in one preset, a1/a2 could not tell them apart.
+            architecture: job.namMode === 'a2' ? 'a2' : (job.architecture || 'a1'),
             validationEsr: trainerState.validationEsr,
             validationEsrFull:
               job.namMode === 'a2' ? (trainerState.epochValidationEsrFull ?? null) : null,
@@ -8472,7 +8473,13 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'trainer:checkNamCaptureNameConflicts',
     async (_event, req: { finalModelRoot: string; captures: Array<{ captureId: string; captureName: string; recordingPath: string }> }) =>
-      findModelNameConflicts(req.captures ?? [], req.finalModelRoot ?? '', trainerHistory, (p) => fs.existsSync(p))
+      findModelNameConflicts(req.captures ?? [], req.finalModelRoot ?? '', trainerHistory, (p) => fs.existsSync(p), (dir) => {
+        try {
+          return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+        } catch {
+          return []
+        }
+      })
   )
 
   // "Queue all for training" from the NAM Projects mode (docs/nam-capture-import-plan-2026-08-29.md

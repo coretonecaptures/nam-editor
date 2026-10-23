@@ -267,7 +267,10 @@ export function findModelNameConflicts(
   items: Array<{ captureId: string; captureName: string; recordingPath: string }>,
   finalModelRoot: string,
   history: Array<Pick<TrainerHistoryEntry, 'status' | 'finalModelName' | 'finalModelPath' | 'timestamp' | 'sourcePath'>>,
-  fileExists: (p: string) => boolean
+  fileExists: (p: string) => boolean,
+  /** The output folder's sub-folders. A preset with several architectures writes each model to
+   * `<root>/<architecture>/<name>.nam`, so only looking at `<root>/<name>.nam` never found them. */
+  listSubfolders: (dir: string) => string[] = () => []
 ): ModelNameConflict[] {
   const latestByKey = new Map<string, { finalModelPath: string; timestamp: string; sourcePath: string }>()
   for (const h of history) {
@@ -284,16 +287,17 @@ export function findModelNameConflicts(
   for (const n of names) batchCounts.set(modelNameKey(n), (batchCounts.get(modelNameKey(n)) ?? 0) + 1)
 
   const root = finalModelRoot.trim()
+  const folders = root ? [root, ...listSubfolders(root).map((sub) => join(root, sub))] : []
   const out: ModelNameConflict[] = []
   items.forEach((it, i) => {
     const modelName = names[i]
     const key = modelNameKey(modelName)
-    const target = root ? join(root, `${modelName}.nam`) : ''
+    const existing = folders.map((dir) => join(dir, `${modelName}.nam`)).find((p) => fileExists(p)) ?? null
     // A history hit on this capture's own recording is still a "you trained this before" signal.
     const conflict: ModelNameConflict = {
       captureId: it.captureId,
       modelName,
-      existingFilePath: target && fileExists(target) ? target : null,
+      existingFilePath: existing,
       historyMatch: latestByKey.get(key) ?? null,
       duplicateInBatch: (batchCounts.get(key) ?? 0) > 1
     }
