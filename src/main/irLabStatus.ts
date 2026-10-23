@@ -45,9 +45,12 @@ const UNKNOWN_STATUS: IrLabStatus = { installed: false, version: null, licenseSt
  * which is ~/Library on macOS -- NOT Electron's appData (~/Library/Application Support), so
  * reading under appData there never found IR Lab's file. On Windows both are %APPDATA%. */
 export function irLabAppDataDir(): string {
-  return process.platform === 'darwin'
-    ? join(homedir(), 'Library', 'IR Lab')
-    : join(app.getPath('appData'), 'IR Lab')
+  return irLabAppDataDirFor(process.platform, homedir(), () => app.getPath('appData'))
+}
+
+/** Pure form of `irLabAppDataDir`, for tests. `appData` is only consulted off macOS. */
+export function irLabAppDataDirFor(platform: NodeJS.Platform, home: string, appData: () => string): string {
+  return platform === 'darwin' ? join(home, 'Library', 'IR Lab') : join(appData(), 'IR Lab')
 }
 
 export function irLabStatusFile(): string {

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { join, resolve, sep } from 'node:path'
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { parseIrLabAllowedRoots, parseIrLabNamFolder, isUnderAnyRoot, checkBlendAllowlist, checkNamAllowlist } from './irLabRoots'
 
 describe('parseIrLabAllowedRoots', () => {
@@ -115,5 +117,24 @@ describe('checkNamAllowlist', () => {
     const result = checkNamAllowlist([P('NAM', 'Amp.nam'), P('Elsewhere', 'Other.nam')], P('NAM'))
     expect(result.allowed).toEqual([P('NAM', 'Amp.nam')])
     expect(result.rejected).toEqual([P('Elsewhere', 'Other.nam')])
+  })
+})
+
+describe('isUnderAnyRoot through a symlink', () => {
+  // IR Lab canonicalises both the file and its folder (ExternalHandoffRouter, 2026-10-10). A file
+  // whose path runs through a link out of the folder must fail here too, not only in IR Lab.
+  it('rejects a path that only looks inside the root because of a link', () => {
+    const base = mkdtempSync(join(tmpdir(), 'irlabroots-'))
+    try {
+      mkdirSync(join(base, 'root'))
+      mkdirSync(join(base, 'outside'))
+      writeFileSync(join(base, 'outside', 'cab.wav'), '')
+      symlinkSync(join(base, 'outside'), join(base, 'root', 'link'))
+      expect(isUnderAnyRoot(join(base, 'root', 'link', 'cab.wav'), [join(base, 'root')])).toBe(false)
+      writeFileSync(join(base, 'root', 'real.wav'), '')
+      expect(isUnderAnyRoot(join(base, 'root', 'real.wav'), [join(base, 'root')])).toBe(true)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 })

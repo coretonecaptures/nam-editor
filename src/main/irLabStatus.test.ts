@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { parseIrLabStatus, irLabSupportsRoute } from './irLabStatus'
+import { join } from 'node:path'
+import { parseIrLabStatus, irLabSupportsRoute, irLabAppDataDirFor } from './irLabStatus'
 
 describe('parseIrLabStatus', () => {
   it('reads a real status file IR Lab writes', () => {
@@ -38,5 +39,17 @@ describe('parseIrLabStatus', () => {
 
   it('treats a status file without routes (older IR Lab) as supporting no new route', () => {
     expect(irLabSupportsRoute(parseIrLabStatus(JSON.stringify({ installed: true, licenseState: 'licensed' })), 'playcab')).toBe(false)
+  })
+})
+
+describe('irLabAppDataDirFor', () => {
+  // IR Lab's JUCE userApplicationDataDirectory: ~/Library on macOS, %APPDATA% on Windows. Electron's
+  // appData on macOS is ~/Library/Application Support, which IR Lab never writes (2026-10-23: the
+  // folder-settings reader used it and found nothing).
+  it('is ~/Library/IR Lab on macOS and never asks for appData there', () => {
+    expect(irLabAppDataDirFor('darwin', '/Users/a', () => { throw new Error('appData read on macOS') })).toBe(join('/Users/a', 'Library', 'IR Lab'))
+  })
+  it('is <appData>/IR Lab elsewhere', () => {
+    expect(irLabAppDataDirFor('win32', 'C:/Users/a', () => 'C:/Users/a/AppData/Roaming')).toBe(join('C:/Users/a/AppData/Roaming', 'IR Lab'))
   })
 })

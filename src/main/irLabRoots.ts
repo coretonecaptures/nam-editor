@@ -10,16 +10,18 @@
  * in THIS app instead.
  *
  * `LiveAuditionSettingsStore::storeFile()` (ir-lab/src/audio/LiveAuditionSettingsStore.cpp) is
- * `<userApplicationDataDirectory>/IR Lab/live-audition-settings.json` — JUCE's
- * userApplicationDataDirectory and Electron's `app.getPath('appData')` resolve to the same
- * per-platform location (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS), so no
- * platform branching is needed here. Read-only: this never writes IR Lab's config. If IR Lab has
+ * `<userApplicationDataDirectory>/IR Lab/live-audition-settings.json`. JUCE's
+ * userApplicationDataDirectory is `~/Library` on macOS, NOT Electron's appData
+ * (`~/Library/Application Support`): reading under appData found nothing on a Mac, so every
+ * blend / Play in IR Lab / Publish send was refused as "no folder configured" (fixed 2026-10-23).
+ * `irLabAppDataDir()` holds that rule once for this file and the status file. On Windows both
+ * are `%APPDATA%`. Read-only: this never writes IR Lab's config. If IR Lab has
  * never been run, or the file is missing/malformed, this returns an empty list rather than
  * throwing — "IR Lab isn't configured yet" is an ordinary, common state, not an error.
  */
-import { app } from 'electron'
 import { join, resolve, sep } from 'node:path'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
+import { irLabAppDataDir } from './irLabStatus'
 
 const SETTINGS_KEYS = ['defaultCabIrFolder', 'defaultReverbIrFolder', 'defaultDiFolder'] as const
 // Added 2026-09-11 alongside IR Lab's `nam`/`namgroup` routes (commit bb2ece4) — same LOW-1
@@ -27,7 +29,7 @@ const SETTINGS_KEYS = ['defaultCabIrFolder', 'defaultReverbIrFolder', 'defaultDi
 const NAM_SETTINGS_KEY = 'defaultNamFolder' as const
 
 export function irLabSettingsFile(): string {
-  return join(app.getPath('appData'), 'IR Lab', 'live-audition-settings.json')
+  return join(irLabAppDataDir(), 'live-audition-settings.json')
 }
 
 /** Pure — takes the file's already-read text so it's unit-testable without a real filesystem. */
@@ -79,9 +81,16 @@ export function readIrLabNamFolder(): string | null {
 }
 
 /** Case-insensitive on Windows (NTFS paths are case-preserving, not case-sensitive) — matches how
- * `juce::File::operator==` compares on that platform. Elsewhere, exact. */
+ * `juce::File::operator==` compares on that platform. Elsewhere, exact. Symlinks are resolved
+ * first when the path exists, as IR Lab's router canonicalises both sides (2026-10-10): a file
+ * reached through a link would otherwise pass here and be refused there. */
 function normalize(p: string): string {
-  const r = resolve(p)
+  let r = resolve(p)
+  try {
+    r = realpathSync.native(r)
+  } catch {
+    // Not on disk (yet): compare the plain resolved path.
+  }
   return process.platform === 'win32' ? r.toLowerCase() : r
 }
 
