@@ -1917,6 +1917,14 @@ def _promote_output_model_path(train_path, model_name, discovered_path, backup_e
             f"  Expected: {discovered_path}\n"
             f"  Check that NAM training completed and that the train_path is writable."
         )
+    # The finder falls back to the expected path when nothing fresh exists; in a reused retry
+    # workspace that path can hold an EARLIER attempt's model. Never report that as this result.
+    if not _is_fresh(source):
+        raise FileNotFoundError(
+            f"NAM did not produce a new .nam file for this run.\n"
+            f"  Found only an older model from a previous attempt: {discovered_path}\n"
+            f"  Check the log above for why training did not export a model."
+        )
     if source.resolve() == target.resolve():
         return str(target)
     target.parent.mkdir(parents=True, exist_ok=True)
