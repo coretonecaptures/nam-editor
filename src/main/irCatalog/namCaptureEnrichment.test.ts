@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
 import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults, trainableInputLevelDbu } from './namCaptureEnrichment'
-import { writeNamLabResult, namLabResultPathFor, readNamLabResult } from './namCaptureResult'
+import { writeNamLabResult, namLabResultPathFor, readNamLabResult, captureTrainingStates, syncCaptureTrainingStatusFiles, namLabStatusPathFor } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
 const tmpDirs: string[] = []
@@ -615,5 +615,39 @@ describe('nam-lab-result.json with several architectures (2026-10-23)', () => {
     writeNamLabResult(rec, { ...base, sourceCaptureId: 'cap2', architecture: 'lite', outputModelPath: '/m/lite/Clean.nam', trainerJobId: 'j4' })
     expect(readNamLabResult(rec)!.models).toHaveLength(1)
     expect(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([])
+  })
+})
+
+describe('training status for IR Lab (2026-10-23)', () => {
+  const job = (jobId: string, status: string, outputPath: string, extra: Record<string, unknown> = {}) =>
+    ({ jobId, status, outputPath, sourceMode: 'nam-capture-import', error: '', finishedAt: null, namCaptureId: 'cap1', ...extra })
+
+  it('training beats queued beats a failed last run; finished or cancelled leaves nothing', () => {
+    const states = captureTrainingStates([
+      job('a1', 'queued', '/p/A.wav'), job('a2', 'running', '/p/A.wav'),
+      job('b1', 'staged', '/p/B.wav'),
+      job('c1', 'success', '/p/C.wav', { finishedAt: '2026-10-23T01:00:00Z' }),
+      job('c2', 'error', '/p/C.wav', { finishedAt: '2026-10-23T02:00:00Z', error: 'CUDA out of memory\ntrace...' }),
+      job('d1', 'error', '/p/D.wav', { finishedAt: '2026-10-23T01:00:00Z' }), job('d2', 'success', '/p/D.wav', { finishedAt: '2026-10-23T02:00:00Z' }),
+      job('e1', 'canceled', '/p/E.wav'),
+      { ...job('f1', 'queued', '/p/F.wav'), sourceMode: 'watcher' }
+    ])
+    expect(states.get('/p/A.wav')?.state).toBe('training')
+    expect(states.get('/p/B.wav')?.state).toBe('queued')
+    expect(states.get('/p/C.wav')).toEqual({ state: 'failed', jobId: 'c2', sourceCaptureId: 'cap1', message: 'CUDA out of memory' })
+    expect(states.has('/p/D.wav') || states.has('/p/E.wav') || states.has('/p/F.wav')).toBe(false)
+  })
+
+  it('writes a status file beside the recording and removes it when the job leaves', () => {
+    const dir = makeTmpDir()
+    const rec = join(dir, 'Clean.wav')
+    const written = new Set<string>()
+    syncCaptureTrainingStatusFiles([job('j1', 'queued', rec)], written)
+    expect(JSON.parse(fs.readFileSync(namLabStatusPathFor(rec), 'utf8')).state).toBe('queued')
+    syncCaptureTrainingStatusFiles([job('j1', 'running', rec)], written)
+    expect(JSON.parse(fs.readFileSync(namLabStatusPathFor(rec), 'utf8')).state).toBe('training')
+    syncCaptureTrainingStatusFiles([job('j1', 'success', rec)], written)
+    expect(fs.existsSync(namLabStatusPathFor(rec))).toBe(false)
+    expect(written.size).toBe(0)
   })
 })

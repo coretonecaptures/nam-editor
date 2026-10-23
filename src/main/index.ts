@@ -8,7 +8,7 @@ import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe
 import { registerIrLibraryIpc } from './irLibraryIpc'
 import { deleteWithFallback } from './trashFile'
 import { stopAllRootWatchers } from './irCatalog/irRootWatcher'
-import { writeNamLabResult } from './irCatalog/namCaptureResult'
+import { writeNamLabResult, syncCaptureTrainingStatusFiles } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, findModelNameConflicts, sanitizeTrainerPathPart, type NamCaptureImportItem, type CaptureProfileConfig, portableCaptureFolder } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
 import { parseNamLabUrl } from './namLabUrl'
@@ -2966,6 +2966,9 @@ function requestEmergencyRequeueCurrentJob(pauseQueue: boolean): boolean {
   return true
 }
 
+// Recordings that have a .nam-lab-status.json from this run (see syncCaptureTrainingStatusFiles).
+const irLabStatusFilesWritten = new Set<string>()
+
 function persistTrainerQueueThrottled(): void {
   // Two-tier save:
   // (1) If the queue's COMPOSITION changed (job added / removed / status transition), write immediately
@@ -2975,6 +2978,8 @@ function persistTrainerQueueThrottled(): void {
   const sig = computeTrainerQueueSignature()
   if (sig !== trainerQueueLastSignature) {
     trainerQueueLastSignature = sig
+    // A job was added, removed or changed state: tell IR Lab (per-capture status files).
+    syncCaptureTrainingStatusFiles(trainerQueue, irLabStatusFilesWritten)
     if (trainerQueueSaveTimer) { clearTimeout(trainerQueueSaveTimer); trainerQueueSaveTimer = null }
     saveTrainerQueue()
     return
@@ -6747,6 +6752,8 @@ app.whenReady().then(async () => {
   trainerHistory = loadTrainerHistory()
   trainerSkipped = loadTrainerSkipped()
   trainerQueue = loadTrainerQueue()
+  // Restore IR Lab's per-capture status files for whatever is still queued from last time.
+  syncCaptureTrainingStatusFiles(trainerQueue, irLabStatusFilesWritten)
   trainerState = { ...trainerState, history: trainerHistory, queue: trainerQueue, watcherState: makeTrainerWatcherSnapshot() }
   void pruneTrainerArtifacts()
   startCompanionBridgeServer()

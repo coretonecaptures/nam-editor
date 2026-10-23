@@ -151,3 +151,93 @@ export function relinkNamLabResult(recordingWavPath: string, newOutputModelPath:
   writeAtomically(namLabResultPathFor(recordingWavPath), JSON.stringify(updated, null, 2) + '\n')
   return updated
 }
+
+// ── Training status for IR Lab (2026-10-23) ─────────────────────────────────────────────────────
+// `<dir>/<CaptureName>.nam-lab-status.json` beside the recording, while a capture is queued,
+// training, or its last run failed: { schemaVersion, state, jobId, sourceCaptureId, message,
+// updatedAt }. Removed when nothing is pending and the last run did not fail (a finished run is
+// the result file above). Written whenever the training queue changes state.
+
+export const NAM_LAB_STATUS_SUFFIX = '.nam-lab-status.json'
+
+export type CaptureTrainingState = 'queued' | 'training' | 'failed'
+
+export interface CaptureTrainingJob {
+  jobId: string
+  status: string
+  outputPath: string
+  sourceMode?: string
+  error?: string
+  finishedAt?: string | null
+  namCaptureId?: string | null
+}
+
+export interface CaptureTrainingStatus {
+  state: CaptureTrainingState
+  jobId: string
+  sourceCaptureId: string | null
+  message: string
+}
+
+export function namLabStatusPathFor(recordingWavPath: string): string {
+  const stem = basename(recordingWavPath, extname(recordingWavPath))
+  return join(dirname(recordingWavPath), `${stem}${NAM_LAB_STATUS_SUFFIX}`)
+}
+
+/** One state per IR Lab capture recording, from every queue job trained from it. Training beats
+ * queued beats a failed last run; a capture whose jobs all finished well (or were cancelled) has
+ * no entry. Pure, for the tests. */
+export function captureTrainingStates(jobs: CaptureTrainingJob[]): Map<string, CaptureTrainingStatus> {
+  const byRecording = new Map<string, CaptureTrainingJob[]>()
+  for (const job of jobs) {
+    if (job.sourceMode !== 'nam-capture-import' || !job.outputPath) continue
+    byRecording.set(job.outputPath, [...(byRecording.get(job.outputPath) ?? []), job])
+  }
+  const out = new Map<string, CaptureTrainingStatus>()
+  for (const [recording, list] of byRecording) {
+    const pick = (statuses: string[]) => list.find((j) => statuses.includes(j.status))
+    const running = pick(['starting', 'running'])
+    const waiting = pick(['queued', 'staged'])
+    const finished = list
+      .filter((j) => ['success', 'error', 'canceled'].includes(j.status))
+      .sort((a, b) => (a.finishedAt ?? '').localeCompare(b.finishedAt ?? ''))
+    const last = finished[finished.length - 1]
+    const chosen = running
+      ? { job: running, state: 'training' as const }
+      : waiting
+        ? { job: waiting, state: 'queued' as const }
+        : last?.status === 'error'
+          ? { job: last, state: 'failed' as const }
+          : null
+    if (!chosen) continue
+    out.set(recording, {
+      state: chosen.state,
+      jobId: chosen.job.jobId,
+      sourceCaptureId: chosen.job.namCaptureId ?? null,
+      message: chosen.state === 'failed' ? (chosen.job.error ?? '').split('\n')[0].trim().slice(0, 200) : ''
+    })
+  }
+  return out
+}
+
+/** Writes / removes the status files to match `jobs`. `written` remembers which recordings have a
+ * file from this app, so one whose jobs left the queue is cleared. Best-effort: never throws. */
+export function syncCaptureTrainingStatusFiles(jobs: CaptureTrainingJob[], written: Set<string>, now = new Date()): void {
+  const states = captureTrainingStates(jobs)
+  for (const [recording, status] of states) {
+    try {
+      writeAtomically(
+        namLabStatusPathFor(recording),
+        JSON.stringify({ schemaVersion: 1, ...status, updatedAt: now.toISOString() }, null, 2) + '\n'
+      )
+      written.add(recording)
+    } catch {
+      // capture folder gone or read-only: nothing to tell IR Lab there
+    }
+  }
+  for (const recording of [...written]) {
+    if (states.has(recording)) continue
+    fs.rmSync(namLabStatusPathFor(recording), { force: true })
+    written.delete(recording)
+  }
+}
