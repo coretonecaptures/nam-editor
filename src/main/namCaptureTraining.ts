@@ -27,6 +27,10 @@ export interface NamCaptureImportItem {
   // modelMetadataSuggested hints -> seeded into the .nam post-train. All optional.
   inputLevelDbu?: number | null
   outputLevelDbu?: number | null
+  /** The sidecar has IR Lab's calibration block. Then its levels are final: a side it left out
+   * was not established and stays out of the model, rather than taking the Trainer tab's
+   * defaults (which describe whatever rig the user set there, not this capture). */
+  calibrated?: boolean
   suggested?: {
     modeledBy?: string | null
     gearMake?: string | null
@@ -191,10 +195,11 @@ export async function buildNamCaptureImportPayloads(
         savePlot: config.savePlot ?? true,
         silent: true,
         ignoreChecks: config.ignoreChecks ?? false,
-        // Capture's own calibration/hints win over the trainer-tab defaults when present.
+        // Capture's own calibration/hints win over the trainer-tab defaults when present. A
+        // calibrated capture never takes default levels (see NamCaptureImportItem.calibrated).
         modeledBy: capture.suggested?.modeledBy ?? defaults.modeledBy,
-        inputLevelDbu: capture.inputLevelDbu ?? defaults.inputLevelDbu,
-        outputLevelDbu: capture.outputLevelDbu ?? defaults.outputLevelDbu,
+        inputLevelDbu: capture.calibrated ? (capture.inputLevelDbu ?? null) : (capture.inputLevelDbu ?? defaults.inputLevelDbu),
+        outputLevelDbu: capture.calibrated ? (capture.outputLevelDbu ?? null) : (capture.outputLevelDbu ?? defaults.outputLevelDbu),
         profileId: config.presetId ?? null,
         profileName: config.presetName ?? (capture.projectName || null),
         sourceMode: 'nam-capture-import',

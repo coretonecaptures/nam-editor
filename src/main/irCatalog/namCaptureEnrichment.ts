@@ -30,10 +30,14 @@ import * as fs from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readNamLabResult, relinkNamLabResult, type NamLabResult } from './namCaptureResult'
+import { trainableInputLevelDbu } from '../../shared/namProjects'
+
+export { trainableInputLevelDbu }
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'])
 
 const SIDECAR_SUFFIX = '.nam-capture.json'
+
 
 /** nam-capture.json (schemaVersion 2). Every field is absent-safe. */
 interface NamCaptureJson {
@@ -108,8 +112,11 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
   const setItemKind = db.prepare(`UPDATE item SET kind = 'nam_capture' WHERE id = ?`)
   const ensureNamCaptureItem = db.prepare(`INSERT OR IGNORE INTO nam_capture_item (item_id) VALUES (?)`)
   // Two-part update: the first group is an always-synced mirror of IR Lab's sidecar; the second
-  // group is the *effective* (user-editable) metadata, default-filled from the sidecar only
-  // while still NULL (COALESCE keeps a user edit; a fresh row gets the suggestion/calibration).
+  // group is the *effective* (user-editable) metadata. An effective value follows the sidecar
+  // while it is still NULL or still equals the mirror's PREVIOUS value (SQLite evaluates every
+  // SET expression against the old row), so a recalibration or a corrected hint in IR Lab
+  // arrives; a value the user changed here is kept. (Was COALESCE: the first value seen stuck for
+  // good, and a recalibrated capture then showed as "edited" and trained with the stale number.)
   const updateNamCaptureFacts = db.prepare(
     `UPDATE nam_capture_item SET
        capture_id = ?, capture_name = ?, project_id = ?, capture_scope = ?, sample_rate = ?,
@@ -119,14 +126,17 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
        calibration_method = ?, calibration_confidence = ?, calibration_profile_name = ?, calibrated_at = ?,
        suggested_name = ?, suggested_modeled_by = ?, suggested_gear_make = ?, suggested_gear_model = ?,
        suggested_gear_type = ?, suggested_tone_type = ?,
-       modeled_by       = COALESCE(modeled_by, ?),
-       gear_make        = COALESCE(gear_make, ?),
-       gear_model       = COALESCE(gear_model, ?),
-       gear_type        = COALESCE(gear_type, ?),
-       tone_type        = COALESCE(tone_type, ?),
-       input_level_dbu  = COALESCE(input_level_dbu, ?),
-       output_level_dbu = COALESCE(output_level_dbu, ?)
+       modeled_by       = CASE WHEN modeled_by IS NULL OR modeled_by IS suggested_modeled_by THEN ? ELSE modeled_by END,
+       gear_make        = CASE WHEN gear_make IS NULL OR gear_make IS suggested_gear_make THEN ? ELSE gear_make END,
+       gear_model       = CASE WHEN gear_model IS NULL OR gear_model IS suggested_gear_model THEN ? ELSE gear_model END,
+       gear_type        = CASE WHEN gear_type IS NULL OR gear_type IS suggested_gear_type THEN ? ELSE gear_type END,
+       tone_type        = CASE WHEN tone_type IS NULL OR tone_type IS suggested_tone_type THEN ? ELSE tone_type END,
+       input_level_dbu  = CASE WHEN input_level_dbu IS NULL OR input_level_dbu IS ? THEN ? ELSE input_level_dbu END,
+       output_level_dbu = CASE WHEN output_level_dbu IS NULL OR output_level_dbu IS calibration_output_dbu THEN ? ELSE output_level_dbu END
      WHERE item_id = ?`
+  )
+  const readPreviousCalibration = db.prepare(
+    `SELECT calibration_input_dbu AS input, calibration_method AS method FROM nam_capture_item WHERE item_id = ?`
   )
   const findCollectionByProject = db.prepare(
     `SELECT id FROM collection WHERE library_root_id = ? AND kind = 'nam_project' AND naming_template = ?`
@@ -195,6 +205,10 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
       const hasHints = capture.modelMetadataSuggested != null
       const hint = capture.modelMetadataSuggested ?? {}
 
+      const previousInputSeed = (itemId: string): number | null => {
+        const prev = readPreviousCalibration.get(itemId) as { input: number | null; method: string | null } | undefined
+        return prev ? trainableInputLevelDbu({ inputLevelDbu: prev.input, method: prev.method }) : null
+      }
       setItemKind.run(recordingItem.id)
       ensureNamCaptureItem.run(recordingItem.id)
       updateNamCaptureFacts.run(
@@ -228,13 +242,15 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
         str(hint.gearModel),
         str(hint.gearType),
         str(hint.toneType),
-        // Effective (editable) defaults — COALESCE'd, so these only apply on a fresh row.
+        // Effective (editable) values: follow the sidecar unless edited here (see the statement).
         str(hint.modeledBy),
         str(hint.gearMake),
         str(hint.gearModel),
         str(hint.gearType),
         str(hint.toneType),
-        num(cal.inputLevelDbu),
+        // Input: compared against the PREVIOUS seed, which already applied the legacy-Guided rule.
+        previousInputSeed(recordingItem.id),
+        trainableInputLevelDbu(cal),
         num(cal.outputLevelDbu),
         recordingItem.id
       )
@@ -508,7 +524,7 @@ function mapCaptureRow(row: CaptureQueryRow): NamCaptureRow {
     effective.gearModel !== suggested.gearModel ||
     effective.gearType !== suggested.gearType ||
     effective.toneType !== suggested.toneType ||
-    effective.inputLevelDbu !== calibration.inputLevelDbu ||
+    effective.inputLevelDbu !== trainableInputLevelDbu(calibration) ||
     effective.outputLevelDbu !== calibration.outputLevelDbu
   return {
     itemId: row.itemId,

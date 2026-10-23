@@ -20,6 +20,7 @@ import type {
   NamLibraryOverview,
   NamLabTrainIntent
 } from '../../types/namProjects'
+import { trainableInputLevelDbu } from '../../types/namProjects'
 import type { TrainerHistoryEntry, TrainerQueueJob } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav, consumePendingNamTrainNav, onNamProjectsIntent } from '../../appNav'
 import {
@@ -2365,6 +2366,7 @@ export function toBatchItem(
   synthetic: boolean
   inputLevelDbu: number | null
   outputLevelDbu: number | null
+  calibrated: boolean
   suggested: {
     modeledBy: string | null
     gearMake: string | null
@@ -2391,8 +2393,9 @@ export function toBatchItem(
     captureFolderPath: c.captureFolderPath as string,
     projectName,
     synthetic: c.synthetic,
-    inputLevelDbu: eff.inputLevelDbu ?? c.calibration?.inputLevelDbu ?? null,
+    inputLevelDbu: eff.inputLevelDbu ?? (c.calibration ? trainableInputLevelDbu(c.calibration) : null),
     outputLevelDbu: eff.outputLevelDbu ?? c.calibration?.outputLevelDbu ?? null,
+    calibrated: c.calibration != null,
     suggested: anyMeta ? meta : null
   }
 }

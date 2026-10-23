@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
-import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults } from './namCaptureEnrichment'
+import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults, trainableInputLevelDbu } from './namCaptureEnrichment'
 import { writeNamLabResult, namLabResultPathFor } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
@@ -476,5 +476,77 @@ describe('applyProjectDefaults (parity backlog item 14)', () => {
     const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
     const result = applyProjectDefaults(db, ampA.collectionId, { gearMake: '   ' })
     expect(result.itemsFilled).toBe(0)
+  })
+})
+
+describe('IR Lab changes after the first scan (2026-10-23)', () => {
+  const sidecarOf = (root: string): string => join(root, 'Amp A', 'NAM Captures', 'Amp A — Clean.nam-capture.json')
+  const rewrite = (root: string, patch: (json: Record<string, any>) => void): void => {
+    const json = JSON.parse(fs.readFileSync(sidecarOf(root), 'utf-8'))
+    patch(json)
+    fs.writeFileSync(sidecarOf(root), JSON.stringify(json))
+  }
+  const clean = (db: DatabaseSync) => {
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    return getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+  }
+
+  it('a recalibration and a corrected hint reach an unedited capture (was: first value stuck)', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+    expect(clean(db).effective.inputLevelDbu).toBe(12.4)
+
+    rewrite(root, (json) => {
+      json.calibration.inputLevelDbu = 14.1
+      json.calibration.outputLevelDbu = 6.5
+      json.modelMetadataSuggested.gearMake = 'Fender USA'
+    })
+    enrichNamCaptures(db, stats.libraryRootId)
+    const after = clean(db)
+    expect(after.effective.inputLevelDbu).toBe(14.1)
+    expect(after.effective.outputLevelDbu).toBe(6.5)
+    expect(after.effective.gearMake).toBe('Fender USA')
+    expect(after.metadataEdited).toBe(false)
+  })
+
+  it('a value edited here survives a recalibration in IR Lab', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+    setNamCaptureMetadata(db, clean(db).itemId, { inputLevelDbu: 9.0, gearMake: 'Suhr' })
+
+    rewrite(root, (json) => {
+      json.calibration.inputLevelDbu = 14.1
+      json.modelMetadataSuggested.gearMake = 'Fender USA'
+    })
+    enrichNamCaptures(db, stats.libraryRootId)
+    const after = clean(db)
+    expect(after.effective.inputLevelDbu).toBe(9.0)
+    expect(after.effective.gearMake).toBe('Suhr')
+    expect(after.calibration?.inputLevelDbu).toBe(14.1) // the mirror still shows IR Lab's value
+  })
+
+  it('a Guided (no meter) input level is provenance only, never the trained level', async () => {
+    const { root } = makeFixture()
+    rewrite(root, (json) => {
+      json.calibration.method = 'guided'
+      json.calibration.confidence = 'interface-spec-verified'
+    })
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+    const row = clean(db)
+    expect(row.calibration?.inputLevelDbu).toBe(12.4)
+    expect(row.effective.inputLevelDbu).toBeNull()
+    expect(row.effective.outputLevelDbu).toBe(4.0)
+    expect(row.metadataEdited).toBe(false)
+    expect(trainableInputLevelDbu({ inputLevelDbu: 12.4, method: 'precision' })).toBe(12.4)
+    expect(trainableInputLevelDbu({ inputLevelDbu: 12.4, method: 'guided' })).toBeNull()
   })
 })
