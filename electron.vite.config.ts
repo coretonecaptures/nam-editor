@@ -1,5 +1,5 @@
 import { resolve } from 'path'
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { defineConfig, externalizeDepsPlugin, loadEnv } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { version } from './package.json'
 
@@ -22,9 +22,19 @@ import { version } from './package.json'
 //
 // Do not reintroduce them without first confirming something actually needs SharedArrayBuffer.
 
-export default defineConfig({
+// The private IR Lab link scheme (src/main/irLabConnector.ts) is baked into the main bundle at
+// BUILD time, as docs/security-review-2026-08-31.md specifies: from the build shell's
+// IR_LAB_URL_SCHEME, else a local, git-ignored .env / .env.local. It used to be read only at
+// runtime, so an app launched from Finder never had it and every Send / Play / Publish to IR Lab
+// was switched off in real builds (2026-10-23). A build from public source still gets ''.
+export default defineConfig(({ mode }) => ({
   main: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    define: {
+      __IR_LAB_URL_SCHEME__: JSON.stringify(
+        process.env.IR_LAB_URL_SCHEME || loadEnv(mode, process.cwd(), 'IR_LAB_').IR_LAB_URL_SCHEME || ''
+      )
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin()]
@@ -43,4 +53,4 @@ export default defineConfig({
     },
     plugins: [react()]
   }
-})
+}))

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildIrLabUrl, irLabConnectorAvailable } from './irLabConnector'
+import { buildIrLabUrl, irLabConnectorAvailable, irLabSendBlocker } from './irLabConnector'
 
 describe('buildIrLabUrl', () => {
   it('builds a session URL', () => {
@@ -95,5 +95,22 @@ describe('irLabConnectorAvailable', () => {
       if (original === undefined) delete process.env.IR_LAB_URL_SCHEME
       else process.env.IR_LAB_URL_SCHEME = original
     }
+  })
+})
+
+describe('irLabSendBlocker (2026-10-23: never report "sent" for a link IR Lab will ignore)', () => {
+  const status = (over: Partial<Parameters<typeof irLabSendBlocker>[0]> = {}) => ({
+    installed: true, version: '1.0.0', licenseState: 'licensed' as const, trialDaysRemaining: null, routes: ['blend', 'nam', 'playcab'] as string[] | null, ...over
+  })
+  it('sends to a licensed IR Lab that knows the route', () => {
+    expect(irLabSendBlocker(status(), 'nam')).toBeNull()
+  })
+  it('stops when IR Lab was never opened, is unlicensed, or predates the route', () => {
+    expect(irLabSendBlocker(status({ installed: false }), 'nam')).toMatch(/not been opened/)
+    expect(irLabSendBlocker(status({ licenseState: 'unlicensed' }), 'nam')).toMatch(/not licensed/)
+    expect(irLabSendBlocker(status({ routes: ['blend'] }), 'namgroup')).toMatch(/cannot receive/)
+  })
+  it('an older IR Lab that lists no routes still gets the routes it always had', () => {
+    expect(irLabSendBlocker(status({ routes: null }), 'blend')).toBeNull()
   })
 })

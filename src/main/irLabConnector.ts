@@ -18,6 +18,7 @@
  * strings (e.g. "Cab IR", "Long Reverb IR") — IR Lab does no fuzzy matching on this string.
  */
 import { shell } from 'electron'
+import { readIrLabStatus, type IrLabStatus } from './irLabStatus'
 
 export type IrLabPayload =
   | { kind: 'session'; captureId: string }
@@ -47,8 +48,17 @@ export interface IrLabSendResult {
   reason?: string
 }
 
+// Replaced at build time by electron.vite.config.ts (main `define`). Absent under vitest, hence
+// the typeof guard.
+declare const __IR_LAB_URL_SCHEME__: string | undefined
+
+/** The scheme baked in at build time; a runtime IR_LAB_URL_SCHEME still overrides it (dev). */
+export function irLabUrlScheme(): string {
+  return process.env.IR_LAB_URL_SCHEME || (typeof __IR_LAB_URL_SCHEME__ === 'string' ? __IR_LAB_URL_SCHEME__ : '')
+}
+
 export function irLabConnectorAvailable(): boolean {
-  return Boolean(process.env.IR_LAB_URL_SCHEME)
+  return Boolean(irLabUrlScheme())
 }
 
 /** Pure (no Electron dependency) so it's actually unit-testable — see irLabConnector.test.ts.
@@ -88,11 +98,32 @@ export function buildIrLabUrl(scheme: string, payload: IrLabPayload): string {
   return `${scheme}${path}?${params.toString()}`
 }
 
+/**
+ * Why IR Lab would not act on this link, from the status file it writes on every launch, or null
+ * to send. Checked before every send (2026-10-23): without it, a link to an IR Lab that was never
+ * run, is unlicensed (its router refuses every link), or predates the route was reported here as
+ * "sent" and then nothing happened. Pure, for the tests.
+ */
+export function irLabSendBlocker(status: IrLabStatus, route: IrLabPayload['kind']): string | null {
+  if (!status.installed) {
+    return 'IR Lab has not been opened on this computer yet. Install it, open it once, then try again.'
+  }
+  if (status.licenseState === 'unlicensed') {
+    return 'IR Lab is not licensed on this computer, so it ignores links from NAM Lab. Add its license in IR Lab’s Settings, then try again.'
+  }
+  if (status.routes !== null && !status.routes.includes(route)) {
+    return 'This version of IR Lab cannot receive this from NAM Lab. Update IR Lab, open it once, then try again.'
+  }
+  return null
+}
+
 export async function sendToIrLab(payload: IrLabPayload): Promise<IrLabSendResult> {
-  const scheme = process.env.IR_LAB_URL_SCHEME
+  const scheme = irLabUrlScheme()
   if (!scheme) {
     return { success: false, reason: 'IR Lab connector is not configured in this build.' }
   }
+  const blocker = irLabSendBlocker(readIrLabStatus(), payload.kind)
+  if (blocker) return { success: false, reason: blocker }
 
   const url = buildIrLabUrl(scheme, payload)
   try {
