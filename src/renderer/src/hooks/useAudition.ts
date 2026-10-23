@@ -227,6 +227,22 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
     setReady(new Set())
   }, [irMix])
 
+  /**
+   * Cache read that also marks the entry most-recently-used.
+   *
+   * Eviction drops the first key in the Map, which was only "oldest inserted" — a capture you
+   * kept returning to was evicted as readily as one heard once. Re-inserting on every hit makes
+   * the first key the least recently heard, i.e. the furthest from attention.
+   */
+  const touchCached = useCallback((key: string): AudioBuffer | undefined => {
+    const hit = cacheRef.current.get(key)
+    if (hit) {
+      cacheRef.current.delete(key)
+      cacheRef.current.set(key, hit)
+    }
+    return hit
+  }, [])
+
   const inputForRate = useCallback(async (rate: number): Promise<Float32Array<ArrayBuffer>> => {
     const cached = diByRateRef.current.get(rate)
     if (cached) return cached
@@ -256,9 +272,9 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
   }, [])
 
   const renderCapture = useCallback(
-    async (file: NamFile): Promise<AudioBuffer | null> => {
+    async (file: NamFile, urgent = false): Promise<AudioBuffer | null> => {
       const key = file.filePath
-      const cached = cacheRef.current.get(key)
+      const cached = touchCached(key)
       if (cached) return cached
       const existing = inFlightRef.current.get(key)
       if (existing) return existing
@@ -280,7 +296,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
           input: new Float32Array(shared),
           sampleRate: rate
         }
-        const result = await getPool().render(request)
+        const result = await getPool().render(request, urgent)
         if (!result.ok) throw new Error(result.error)
 
         // Same rule the player uses: a capture that already contains a cab must NOT get another,
@@ -331,7 +347,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       inFlightRef.current.set(key, job)
       return job
     },
-    [getCtx, getPool, inputForRate, irMix]
+    [getCtx, getPool, inputForRate, irMix, touchCached]
   )
 
   const stopSource = useCallback(() => {
@@ -372,7 +388,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
         sourceRef.current = source
       }
 
-      const cached = cacheRef.current.get(file.filePath)
+      const cached = touchCached(file.filePath)
       if (cached) {
         startWith(cached)
         return
@@ -381,7 +397,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       // still waiting on this capture, and a fresh render uses the settings they just chose.
       const attempt = (retries: number): void => {
         const epoch = epochRef.current
-        void renderCapture(file).then((buffer) => {
+        void renderCapture(file, true).then((buffer) => {
           if (buffer) startWith(buffer)
           else if (generationRef.current !== generation) return
           else if (retries > 0 && epochRef.current !== epoch) attempt(retries - 1)
@@ -390,7 +406,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       }
       attempt(1)
     },
-    [getCtx, renderCapture, stopSource]
+    [getCtx, renderCapture, stopSource, touchCached]
   )
 
   const prefetch = useCallback(
@@ -399,7 +415,9 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       const pool = getPool()
       // Don't queue more than the pool can chew through - a long queue would delay whatever the
       // user presses next behind speculative work they may never want.
-      let budget = POOL_SIZE * 2 - pool.pending
+      // In-flight renders, not pool.pending: a render spends time reading the file and waiting
+      // on the IR before it reaches the pool, and those weren't counted, so the budget overshot.
+      let budget = Math.min(POOL_SIZE * 2 - pool.pending, POOL_SIZE * 2 - inFlightRef.current.size)
       for (const file of files) {
         if (budget <= 0) break
         if (cacheRef.current.has(file.filePath) || inFlightRef.current.has(file.filePath)) continue

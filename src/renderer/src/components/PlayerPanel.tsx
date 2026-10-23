@@ -257,6 +257,14 @@ function loadLoopPref(): boolean {
   }
 }
 
+/** A preview render superseded by a newer one. Expected, never shown. */
+class PreviewCancelledError extends Error {
+  constructor() {
+    super('Preview render was cancelled')
+    this.name = 'PreviewCancelledError'
+  }
+}
+
 function formatError(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -707,6 +715,8 @@ export function PlayerPanel({
   const sourceRef = useRef<AudioBufferSourceNode | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const workerRef = useRef<Worker | null>(null)
+  /** Cancels the render currently in a worker, if any — see renderPreview. */
+  const cancelRenderRef = useRef<(() => void) | null>(null)
   const startedAtRef = useRef(0)
   const rafRef = useRef<number | null>(null)
 
@@ -756,6 +766,9 @@ export function PlayerPanel({
   useEffect(() => {
     return () => {
       stopPlayback()
+      // A request still reading/decoding must not create a worker or context after unmount.
+      renderGenerationRef.current++
+      cancelRenderRef.current?.()
       workerRef.current?.terminate()
       workerRef.current = null
       void audioCtxRef.current?.close()
@@ -779,6 +792,7 @@ export function PlayerPanel({
           window.api.readFileBinary(sourceDiPath),
           window.api.readFileBinary(file.filePath)
         ])
+        if (isStale()) return
         if (diResult.error || !diResult.data) {
           throw new Error(`Could not read the reference DI: ${diResult.error ?? 'no data'}`)
         }
@@ -790,6 +804,7 @@ export function PlayerPanel({
 
         const ctx = getAudioContext()
         const decoded = await ctx.decodeAudioData(base64ToArrayBuffer(diResult.data))
+        if (isStale()) return
         const diSampleRate = decoded.sampleRate
         const wholeChannel = new Float32Array(decoded.length)
         decoded.copyFromChannel(wholeChannel, 0, 0)
@@ -803,19 +818,41 @@ export function PlayerPanel({
 
         const modelSampleRate = readModelSampleRate(modelJson)
         const input = await resampleTo(diWindow, diSampleRate, modelSampleRate)
+        // Checked after every await, not just at the end: an older request resuming here used to
+        // terminate the NEWER request's worker, leaving the current preview stuck on "rendering".
+        if (isStale()) return
 
         setStatus('rendering')
         const rendered = await new Promise<NamRenderResponse>((resolve, reject) => {
-          workerRef.current?.terminate()
+          // Cancel whatever render is still running — terminating its worker AND settling its
+          // promise, since a terminated worker never replies and its caller would wait forever.
+          cancelRenderRef.current?.()
           const worker = new Worker(new URL('../workers/namRender.worker.ts', import.meta.url), {
             type: 'module'
           })
           workerRef.current = worker
-          worker.onmessage = (event: MessageEvent<NamRenderResponse>) => resolve(event.data)
-          worker.onerror = (event) => reject(new Error(event.message || 'Render worker crashed'))
+          const release = (): void => {
+            if (cancelRenderRef.current === cancel) cancelRenderRef.current = null
+            if (workerRef.current === worker) workerRef.current = null
+            worker.terminate()
+          }
+          const cancel = (): void => {
+            release()
+            reject(new PreviewCancelledError())
+          }
+          cancelRenderRef.current = cancel
+          worker.onmessage = (event: MessageEvent<NamRenderResponse>) => {
+            release()
+            resolve(event.data)
+          }
+          worker.onerror = (event) => {
+            release()
+            reject(new Error(event.message || 'Render worker crashed'))
+          }
           const request: NamRenderRequest = { modelJson, input, sampleRate: modelSampleRate }
           worker.postMessage(request, [input.buffer])
         })
+        if (isStale()) return
         if (!rendered.ok) throw new Error(rendered.error)
 
         let processed: Float32Array = rendered.output
@@ -825,14 +862,17 @@ export function PlayerPanel({
         let effectiveLoudnessDb = rendered.loudnessDb
         if (irEnabled && irPath) {
           const irResult = await window.api.readFileBinary(irPath)
+          if (isStale()) return
           if (irResult.error || !irResult.data) {
             throw new Error(`Could not read the cabinet IR: ${irResult.error ?? 'no data'}`)
           }
           const irDecoded = await ctx.decodeAudioData(base64ToArrayBuffer(irResult.data))
+          if (isStale()) return
           const irMono = new Float32Array(irDecoded.length)
           irDecoded.copyFromChannel(irMono, 0, 0)
           const dry = processed
           processed = await applyCabinetIr(dry, modelSampleRate, irMono, irDecoded.sampleRate, irMix)
+          if (isStale()) return
           effectiveLoudnessDb = loudnessAfterIr(rendered.loudnessDb, dry, processed)
         }
 
@@ -848,7 +888,7 @@ export function PlayerPanel({
         setRenderMs(rendered.renderMs)
         setStatus('ready')
       } catch (error) {
-        if (isStale()) return
+        if (isStale() || error instanceof PreviewCancelledError) return
         setErrorMsg(formatError(error))
         setStatus('error')
       }
