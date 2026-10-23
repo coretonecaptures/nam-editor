@@ -24,6 +24,7 @@ import {
   base64ToArrayBuffer,
   captureNeedsCabIr,
   findLoudestWindowStart,
+  loudnessAfterIr,
   normalizeRendered,
   readModelSampleRate
 } from '../utils/playerAudio'
@@ -43,6 +44,22 @@ export const AUDITION_CLIP_SECONDS = 5
 const POOL_SIZE = 4
 /** Rendered clips kept in memory before the furthest from attention are dropped. */
 const CACHE_CAPACITY = 64
+
+/**
+ * Fold a convolution's tail back onto its start, giving a buffer exactly `length` long.
+ *
+ * Auditions loop. Linear convolution appends the cab's ring-out after the clip ends, so every
+ * loop played that decay into silence and then jumped back to a start with no cab ringing at all
+ * — a dropout and a click once per loop. Wrapping the tail makes the convolution circular, which
+ * is what a seamless loop of the clip through the cab actually sounds like.
+ */
+export function wrapTail(samples: Float32Array, length: number): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(Math.max(0, length))
+  if (length <= 0) return out
+  out.set(samples.subarray(0, Math.min(length, samples.length)))
+  for (let i = length; i < samples.length; i++) out[(i - length) % length] += samples[i]
+  return out
+}
 
 export interface AuditionApi {
   /** Render if needed, then play looped. Safe to call rapidly; the last call wins. */
@@ -98,6 +115,14 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
   const irLoadRef = useRef<Promise<void> | null>(null)
   /** Bumped on every play/stop; a render that finishes after a newer request is discarded. */
   const generationRef = useRef(0)
+  /**
+   * Bumped whenever what a render depends on changes: the DI clip, the cab, or the cab mix.
+   *
+   * Clearing the cache alone wasn't enough. A render already in flight when the setting changed
+   * finished afterwards and cached itself under the new setting — so the first few captures you
+   * heard after picking a cab could keep playing dry (or through the old cab) indefinitely.
+   */
+  const epochRef = useRef(0)
 
   const getCtx = useCallback((): AudioContext => {
     if (!ctxRef.current || ctxRef.current.state === 'closed') ctxRef.current = new AudioContext()
@@ -120,6 +145,8 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
     let cancelled = false
     setDiReady(false)
     setError('')
+    epochRef.current++
+    inFlightRef.current.clear()
     cacheRef.current.clear()
     diByRateRef.current.clear()
     rawDiRef.current = null
@@ -159,6 +186,8 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
     let cancelled = false
     irRef.current = null
     // Everything cached was rendered through the previous cab (or none), so it is all stale.
+    epochRef.current++
+    inFlightRef.current.clear()
     cacheRef.current.clear()
     setReady(new Set())
     if (!irPath) {
@@ -184,11 +213,26 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
     }
   }, [irPath, getCtx])
 
+  // The mix is baked into each cached render too. Skipped on mount so the IR effect above, which
+  // runs in the same pass, isn't followed by a redundant second clear.
+  const mixMountedRef = useRef(false)
+  useEffect(() => {
+    if (!mixMountedRef.current) {
+      mixMountedRef.current = true
+      return
+    }
+    epochRef.current++
+    inFlightRef.current.clear()
+    cacheRef.current.clear()
+    setReady(new Set())
+  }, [irMix])
+
   const inputForRate = useCallback(async (rate: number): Promise<Float32Array<ArrayBuffer>> => {
     const cached = diByRateRef.current.get(rate)
     if (cached) return cached
     const raw = rawDiRef.current
     if (!raw) throw new Error('No DI clip loaded')
+    const epoch = epochRef.current
     let out: Float32Array<ArrayBuffer>
     if (raw.rate === rate) {
       out = raw.samples
@@ -205,7 +249,9 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       out = new Float32Array(rendered.length)
       rendered.copyFromChannel(out, 0)
     }
-    diByRateRef.current.set(rate, out)
+    // Resampled from a DI that has since been replaced: usable by the caller (whose render will be
+    // discarded anyway), but must not be cached as the new clip's resample.
+    if (epochRef.current === epoch) diByRateRef.current.set(rate, out)
     return out
   }, [])
 
@@ -217,6 +263,7 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
       const existing = inFlightRef.current.get(key)
       if (existing) return existing
       if (!rawDiRef.current) return null
+      const epoch = epochRef.current
 
       const job = (async (): Promise<AudioBuffer | null> => {
       try {
@@ -239,17 +286,23 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
         // Same rule the player uses: a capture that already contains a cab must NOT get another,
         // or you hear two speakers in series.
         let processed: Float32Array = result.output
-        let usedIr = false
+        let loudnessDb = result.loudnessDb
         const ir = irRef.current
         if (ir && captureNeedsCabIr(file.metadata.gear_type)) {
-          processed = await applyCabinetIr(processed, rate, ir.samples, ir.rate, irMix)
-          usedIr = true
+          const dry = processed
+          const wet = wrapTail(await applyCabinetIr(dry, rate, ir.samples, ir.rate, irMix), dry.length)
+          // Same correction the player makes. This used to peak-normalise cab'd renders instead,
+          // which put every amp-only capture ~8 dB hotter than an amp+cab one beside it on the
+          // map — a level difference that reads as a tone difference when comparing by ear.
+          loudnessDb = loudnessAfterIr(result.loudnessDb, dry, wet)
+          processed = wet
         }
 
         applyDcBlocker(processed, rate)
-        // The model's own loudness figure describes the dry signal, so it no longer applies once
-        // a cab has been convolved in - fall back to peak normalisation, as the player does.
-        const normalized = normalizeRendered(processed, usedIr ? null : result.loudnessDb)
+        const normalized = normalizeRendered(processed, loudnessDb)
+        // The DI, cab or mix changed while this rendered: it describes settings nobody is
+        // listening through any more, so it must not be cached or played.
+        if (epochRef.current !== epoch) return null
         const buffer = getCtx().createBuffer(1, normalized.length, rate)
         buffer.copyToChannel(normalized, 0)
 
@@ -267,10 +320,12 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
         })
         return buffer
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        if (epochRef.current === epoch) setError(e instanceof Error ? e.message : String(e))
         return null
       } finally {
-        inFlightRef.current.delete(key)
+        // Only our own entry — after an epoch change a newer render of this path may own it.
+        // Same epoch means the entry is still ours; otherwise the map was cleared under us.
+        if (epochRef.current === epoch) inFlightRef.current.delete(key)
       }
       })()
       inFlightRef.current.set(key, job)
@@ -322,10 +377,18 @@ export function useAudition(diPath: string | null, options: AuditionOptions = {}
         startWith(cached)
         return
       }
-      void renderCapture(file).then((buffer) => {
-        if (buffer) startWith(buffer)
-        else if (generationRef.current === generation) setPlayingPath(null)
-      })
+      // One retry when the render was discarded because the DI/cab changed under it — the user is
+      // still waiting on this capture, and a fresh render uses the settings they just chose.
+      const attempt = (retries: number): void => {
+        const epoch = epochRef.current
+        void renderCapture(file).then((buffer) => {
+          if (buffer) startWith(buffer)
+          else if (generationRef.current !== generation) return
+          else if (retries > 0 && epochRef.current !== epoch) attempt(retries - 1)
+          else setPlayingPath(null)
+        })
+      }
+      attempt(1)
     },
     [getCtx, renderCapture, stopSource]
   )

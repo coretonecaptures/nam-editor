@@ -28,7 +28,7 @@ import {
   type ToneGridMark
 } from './dashboard/ToneGrid'
 import { paddedDomain } from './dashboard/scales'
-import { captureNeedsCabIr } from '../utils/playerAudio'
+import { GEAR_TYPES_WITH_CAB, captureNeedsCabIr } from '../utils/playerAudio'
 import { ScanList } from './ScanList'
 import { useAudition } from '../hooks/useAudition'
 import {
@@ -662,19 +662,23 @@ export function ToneMapView({
    * costs a line and removes the confusion.
    */
   const cabSplit = useMemo(() => {
+    // Three buckets, not two: an untagged gear type gets no IR (captureNeedsCabIr can't classify
+    // it), but that doesn't mean it HAS a cab — reporting it as "already have one" was false.
     let needs = 0
+    let has = 0
     const needsKeys = new Set<string>()
     const hasKeys = new Set<string>()
     for (const f of filtered) {
-      const key = f.metadata.gear_type ?? GEAR_UNTAGGED
+      const key = f.metadata.gear_type || GEAR_UNTAGGED
       if (captureNeedsCabIr(f.metadata.gear_type)) {
         needs++
         needsKeys.add(key)
-      } else {
+      } else if (f.metadata.gear_type && GEAR_TYPES_WITH_CAB.has(f.metadata.gear_type)) {
+        has++
         hasKeys.add(key)
       }
     }
-    return { needs, has: filtered.length - needs, total: filtered.length, needsKeys, hasKeys }
+    return { needs, has, unknown: filtered.length - needs - has, total: filtered.length, needsKeys, hasKeys }
   }, [filtered])
 
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (key: string) =>
@@ -848,7 +852,7 @@ export function ToneMapView({
   )
 
   const handleWheel = useCallback(
-    (event: React.WheelEvent<HTMLDivElement>) => {
+    (event: WheelEvent) => {
       // Only take over the wheel when actually zooming, so the page can still scroll otherwise.
       if (event.deltaY === 0) return
       event.preventDefault()
@@ -858,6 +862,14 @@ export function ToneMapView({
     },
     [valueAtClientX, zoomAt]
   )
+
+  // Native, non-passive listener: React registers wheel handlers as passive, so preventDefault()
+  // inside an onWheel prop is ignored and the surrounding panel scrolled on every zoom step.
+  useEffect(() => {
+    if (!plotEl) return
+    plotEl.addEventListener('wheel', handleWheel, { passive: false })
+    return () => plotEl.removeEventListener('wheel', handleWheel)
+  }, [plotEl, handleWheel])
 
   const dragRef = useRef<{ clientX: number; moved: boolean } | null>(null)
   const suppressPlotClickRef = useRef(false)
@@ -1384,14 +1396,18 @@ export function ToneMapView({
                   }`}
                 >
                   {irPath && cabSplit.needs === 0
-                    ? 'every capture in scope already has a cab — this IR is not applied to any of them'
-                    : irPath && cabSplit.has > 0
-                      ? `cab applied to ${cabSplit.needs.toLocaleString()} of ${cabSplit.total.toLocaleString()} · the other ${cabSplit.has.toLocaleString()} already have one. Filter by Gear type to compare like with like.`
+                    ? cabSplit.unknown > 0
+                      ? 'this IR is not applied to any capture in scope — none are tagged as needing a cab'
+                      : 'every capture in scope already has a cab — this IR is not applied to any of them'
+                    : irPath && cabSplit.needs < cabSplit.total
+                      ? `cab applied to ${cabSplit.needs.toLocaleString()} of ${cabSplit.total.toLocaleString()} · the other ${(cabSplit.total - cabSplit.needs).toLocaleString()} ${cabSplit.unknown > 0 ? 'have a cab or no gear type' : 'already have one'}. Filter by Gear type to compare like with like.`
                       : irPath
                         ? `cab applied to all ${cabSplit.total.toLocaleString()} in scope`
                         : cabSplit.needs > 0
                           ? `${cabSplit.needs.toLocaleString()} in scope have no cab — pick an IR or they will sound harsh`
-                          : 'no cab needed — every capture in scope has one'}
+                          : cabSplit.unknown > 0
+                            ? `${cabSplit.unknown.toLocaleString()} in scope have no gear type, so no cab is applied to them`
+                            : 'no cab needed — every capture in scope has one'}
                 </span>
               )}
               <span className="text-xs text-gray-400 dark:text-gray-500">
@@ -1423,7 +1439,6 @@ export function ToneMapView({
           ) : (
             <div
               ref={attachPlot}
-              onWheel={handleWheel}
               onMouseDown={handlePanStart}
               onMouseMove={handlePanMove}
               onMouseUp={handlePanEnd}

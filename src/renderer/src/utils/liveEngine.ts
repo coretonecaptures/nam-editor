@@ -541,8 +541,52 @@ export async function listAudioInputs(): Promise<LiveDeviceInfo[]> {
     }))
 }
 
+/**
+ * Thrown by `start()` when `stop()` (or a newer `start()`) superseded it mid-startup.
+ *
+ * Not a failure: the caller asked for this session to end. Callers should swallow it rather than
+ * show it, and must not tear anything down in response — the newer session owns the engine now.
+ */
+export class LiveStartCancelledError extends Error {
+  constructor() {
+    super('Live start was cancelled')
+    this.name = 'LiveStartCancelledError'
+  }
+}
+
+/**
+ * Peak ceiling for the live output, matching the offline path's PEAK_CEILING.
+ *
+ * Live has no measured normalisation — it commits to a metadata-derived gain before any audio
+ * exists, and a real A2 model renders peaks above 10 from a normal guitar input. Without a final
+ * stage that went straight to the headphones over-range.
+ */
+const LIVE_PEAK_CEILING = 0.99
+
+/** Hard-clip curve at LIVE_PEAK_CEILING: the backstop behind the limiter, never the main tool. */
+function makeCeilingCurve(): Float32Array<ArrayBuffer> {
+  const n = 4097
+  const curve = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1
+    curve[i] = Math.max(-LIVE_PEAK_CEILING, Math.min(LIVE_PEAK_CEILING, x))
+  }
+  return curve
+}
+
 export class LiveEngine {
   private ctx: AudioContext | null = null
+  /**
+   * Bumped by every stop(). A start() that sees it change after an await has been superseded
+   * and must not touch the graph again — otherwise closing the player mid-startup could still
+   * open the mic and connect output a moment later.
+   */
+  private lifecycle = 0
+  /** Bumped by every cabinet rebuild; a build that resolves after a newer one is discarded. */
+  private cabinetBuild = 0
+  /** Final output protection: limiter, then a hard ceiling, then the destination. */
+  private limiter: DynamicsCompressorNode | null = null
+  private ceiling: WaveShaperNode | null = null
   private stream: MediaStream | null = null
   private source: MediaStreamAudioSourceNode | null = null
   private splitter: ChannelSplitterNode | null = null
@@ -871,9 +915,14 @@ export class LiveEngine {
 
   async start(options: LiveStartOptions): Promise<void> {
     await this.stop()
+    const session = this.lifecycle
+    const guard = (): void => {
+      if (this.lifecycle !== session) throw new LiveStartCancelledError()
+    }
 
     try {
       const { module, manifest } = await LiveEngine.loadWasm()
+      guard()
 
       // Ask for the model's rate so the DSP runs at what it was trained for. The browser may
       // refuse and pick the device rate; that's reported rather than fought.
@@ -887,7 +936,7 @@ export class LiveEngine {
       // interface's inputs together rather than give you the one your guitar is in; the channel
       // is chosen further down the graph instead, where it can be changed without reopening the
       // device.
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           ...(options.deviceId ? { deviceId: { exact: options.deviceId } } : {}),
           echoCancellation: false,
@@ -896,8 +945,16 @@ export class LiveEngine {
         },
         video: false
       })
+      // Stopped while the permission prompt / device open was pending: nothing else will ever
+      // release this stream, and an open input keeps the OS mic indicator lit.
+      if (this.lifecycle !== session) {
+        stream.getTracks().forEach((track) => track.stop())
+        throw new LiveStartCancelledError()
+      }
+      this.stream = stream
 
       await ctx.audioWorklet.addModule('/nam-worklet.js')
+      guard()
       // Loaded unconditionally so switching to the plate reverb mid-session is instant. It is a
       // small text module; the cost is a parse, not a WASM compile.
       try {
@@ -907,6 +964,7 @@ export class LiveEngine {
         this.plateAvailable = false
         this.onError(`Plate reverb unavailable: ${error instanceof Error ? error.message : String(error)}`)
       }
+      guard()
       try {
         await ctx.audioWorklet.addModule('/gate-worklet.js')
         this.gateAvailable = true
@@ -914,6 +972,7 @@ export class LiveEngine {
         this.gateAvailable = false
         this.onError(`Noise gate unavailable: ${error instanceof Error ? error.message : String(error)}`)
       }
+      guard()
 
       this.worklet = new AudioWorkletNode(ctx, 'nam-processor', {
         numberOfInputs: 1,
@@ -1027,31 +1086,53 @@ export class LiveEngine {
       this.setEq(options.eq ?? DEFAULT_EQ)
       this.setDelay(options.delay ?? DEFAULT_DELAY)
       if (options.delayIr) await this.setDelayIr(options.delayIr)
+      guard()
       this.setEchoLab(options.echoLab ?? DEFAULT_ECHO_LAB)
       this.setChorus(options.chorus ?? DEFAULT_CHORUS)
       this.setReverb(options.reverb ?? DEFAULT_REVERB)
       if (options.reverbIr) await this.setReverbIr(options.reverbIr)
+      guard()
 
       this.irMix = Math.max(0, Math.min(1, options.irMix ?? 1))
       this.irA = options.ir ?? null
       this.irB = null
       this.irBlend = 0
       await this.wireCabinets()
+      guard()
+
+      // Output protection, after every gain and effect. A transparent limiter catches overs from
+      // hot models, EQ boosts and stacked effects; the hard ceiling behind it guarantees nothing
+      // over-range reaches the device even during the limiter's attack.
+      this.limiter = ctx.createDynamicsCompressor()
+      this.limiter.threshold.value = -1
+      this.limiter.knee.value = 0
+      this.limiter.ratio.value = 20
+      this.limiter.attack.value = 0.001
+      this.limiter.release.value = 0.1
+      this.ceiling = ctx.createWaveShaper()
+      this.ceiling.curve = makeCeilingCurve()
+      this.outputGain.connect(this.limiter)
+      this.limiter.connect(this.ceiling)
 
       // Post-everything, so the meter shows what actually reaches the speakers.
       this.analyser = ctx.createAnalyser()
       this.analyser.fftSize = 2048
-      this.outputGain.connect(this.analyser)
-      this.outputGain.connect(ctx.destination)
+      this.ceiling.connect(this.analyser)
+      this.ceiling.connect(ctx.destination)
 
       if (options.outputDeviceId) await this.setOutputDevice(options.outputDeviceId)
+      guard()
 
       // ~33Hz poll for Echo Lab's ducking envelope follower — see the buildFxChain comment by
       // echoLabDuckAnalyser for why this is a plain timer rather than a worklet.
       this.echoLabDuckTimerId = setInterval(() => this.updateEchoLabDuck(), 30)
 
       await ctx.resume()
+      guard()
     } catch (error) {
+      // A cancelled start was already torn down by the stop() that cancelled it, and a newer
+      // start() may own the engine by now — stopping again here would kill that one.
+      if (error instanceof LiveStartCancelledError) throw error
       await this.stop()
       throw error instanceof Error ? error : new Error(String(error))
     }
@@ -2325,10 +2406,10 @@ export class LiveEngine {
     for (let i = 0; i < irSamples.length; i++) irEnergy += irSamples[i] * irSamples[i]
     const makeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
 
+    // Not connected here: the caller connects only once it knows this build is still current,
+    // so an overlapping rebuild can't leave an orphaned, still-audible branch behind.
     const wetGain = ctx.createGain()
-    this.worklet.connect(convolver)
     convolver.connect(wetGain)
-    wetGain.connect(this.fxInput)
     return { convolver, wetGain, makeup }
   }
 
@@ -2343,9 +2424,10 @@ export class LiveEngine {
   /** Tears down and rebuilds both cabinet slots from this.irA/this.irB — same all-or-nothing
    * rebuild style the original single-slot wireIr() used, just parameterized over two IRs
    * instead of one. Assumes the caller has already disconnected the worklet's outputs. */
-  private async wireCabinets(): Promise<void> {
+  private async wireCabinets(): Promise<boolean> {
     const ctx = this.ctx
-    if (!ctx || !this.worklet || !this.fxInput) return
+    const build = ++this.cabinetBuild
+    if (!ctx || !this.worklet || !this.fxInput) return false
 
     for (const node of [this.convolverA, this.wetGainA, this.convolverB, this.wetGainB, this.dryGain]) {
       try {
@@ -2364,10 +2446,22 @@ export class LiveEngine {
 
     if ((!this.irA && !this.irB) || this.irMix <= 0) {
       this.worklet.connect(this.fxInput)
-      return
+      return true
     }
 
     const [a, b] = await Promise.all([this.buildCabinetSlot(this.irA), this.buildCabinetSlot(this.irB)])
+    // Superseded while resampling (another slot change, or stop): drop these nodes unconnected.
+    // The newer build does the wiring.
+    if (build !== this.cabinetBuild || this.ctx !== ctx || !this.worklet || !this.fxInput) {
+      return false
+    }
+    const worklet = this.worklet
+    const fxInput = this.fxInput
+    for (const slot of [a, b]) {
+      if (!slot) continue
+      worklet.connect(slot.convolver)
+      slot.wetGain.connect(fxInput)
+    }
     if (a) {
       this.convolverA = a.convolver
       this.wetGainA = a.wetGain
@@ -2380,10 +2474,11 @@ export class LiveEngine {
     }
 
     this.dryGain = ctx.createGain()
-    this.worklet.connect(this.dryGain)
-    this.dryGain.connect(this.fxInput)
+    worklet.connect(this.dryGain)
+    this.dryGain.connect(fxInput)
 
     this.applyCabinetGains()
+    return true
   }
 
   /**
@@ -2414,8 +2509,9 @@ export class LiveEngine {
       // Already disconnected.
     }
     // The tap is on the source, not the worklet, so it survives this rewiring untouched.
-    await this.wireCabinets()
-    if (this.ctx !== ctx) return
+    // A superseded rebuild leaves the fade-up to the newer one, which is still mid-flight.
+    const installed = await this.wireCabinets()
+    if (!installed || this.ctx !== ctx) return
 
     const resumeAt = ctx.currentTime
     gain.cancelScheduledValues(resumeAt)
@@ -2623,6 +2719,8 @@ export class LiveEngine {
   }
 
   async stop(): Promise<void> {
+    this.lifecycle++
+    this.cabinetBuild++
     if (this.echoLabDuckTimerId) {
       clearInterval(this.echoLabDuckTimerId)
       this.echoLabDuckTimerId = null
@@ -2715,6 +2813,8 @@ export class LiveEngine {
       this.wetGainB,
       this.dryGain,
       this.outputGain,
+      this.limiter,
+      this.ceiling,
       this.analyser,
       this.inputAnalyser
     ]) {
@@ -2744,6 +2844,8 @@ export class LiveEngine {
     this.irBlend = 0
     this.dryGain = null
     this.outputGain = null
+    this.limiter = null
+    this.ceiling = null
     this.analyser = null
     this.inputAnalyser = null
     this.irMix = 1

@@ -39,6 +39,7 @@ class NamProcessor extends AudioWorkletProcessor {
     this.failed = null
     this.modelHandle = 0
     this.bypass = false
+    this.reportedNonFinite = false
     this.inputGain = 1
     this.outputGain = 1
 
@@ -293,8 +294,27 @@ class NamProcessor extends AudioWorkletProcessor {
       return true
     }
 
+    // Non-finite samples are zeroed here, before they reach any stateful node downstream: one NaN
+    // in a convolver or delay line poisons it for the rest of the session, not just one block.
     const gain = this.outputGain
-    for (let i = 0; i < n; i++) output[i] = this.heapF32[outBase + i] * gain
+    let bad = false
+    for (let i = 0; i < n; i++) {
+      const v = this.heapF32[outBase + i] * gain
+      if (v === v && v !== Infinity && v !== -Infinity) {
+        output[i] = v
+      } else {
+        output[i] = 0
+        bad = true
+      }
+    }
+    if (bad && !this.reportedNonFinite) {
+      this.reportedNonFinite = true
+      this.port.postMessage({
+        type: 'error',
+        stage: 'process',
+        error: 'Model produced non-finite output; muted those samples'
+      })
+    }
 
     return true
   }

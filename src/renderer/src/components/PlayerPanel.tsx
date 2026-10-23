@@ -55,6 +55,7 @@ import {
   REVERB_LOW_SHELF_HZ,
   listAudioInputs,
   listAudioOutputs,
+  LiveStartCancelledError,
   type ChorusSettings,
   type DelaySettings,
   type DelaySlotView,
@@ -564,6 +565,10 @@ export function PlayerPanel({
   const [liveTuner, setLiveTuner] = useState<PitchReading | null>(null)
   const liveEngineRef = useRef<LiveEngine | null>(null)
   const liveMeterRafRef = useRef<number | null>(null)
+  /** Bumped by every stopLive(); a startLive() that sees it move has been superseded. */
+  const liveSessionRef = useRef(0)
+  /** Session of the most recent startLive(), so only it (or a plain stop) clears "Starting…". */
+  const liveStartSessionRef = useRef(-1)
   const tunerTrackerRef = useRef<PitchTracker | null>(null)
   const volumeRef = useRef<GainNode | null>(null)
   const [volumeDb, setVolumeDb] = useState<number>(() => loadVolumeDb())
@@ -666,6 +671,8 @@ export function PlayerPanel({
   const [saveAsPrompt, setSaveAsPrompt] = useState<{ title: string; onSave: (name: string) => void } | null>(null)
   const [saveAsValue, setSaveAsValue] = useState('')
   const volumeGain = volumeDb <= VOLUME_MIN_DB ? 0 : Math.pow(10, volumeDb * 0.05)
+  const volumeGainRef = useRef(volumeGain)
+  volumeGainRef.current = volumeGain
 
   const [diPrefs, setDiPrefs] = useState<DiPrefs>(loadDiPrefs)
 
@@ -997,7 +1004,10 @@ export function PlayerPanel({
       // rather than how far you happened to turn the knob down.
       if (!volumeRef.current) volumeRef.current = ctx.createGain()
       const volume = volumeRef.current
-      volume.gain.value = volumeGain
+      // From the ref, not the closure: this callback doesn't re-create on volume changes, so the
+      // captured value was whatever the slider said when it was last built — Play could undo a
+      // newer setting, including mute.
+      volume.gain.value = volumeGainRef.current
 
       const source = ctx.createBufferSource()
       source.buffer = buffer
@@ -1013,8 +1023,12 @@ export function PlayerPanel({
       startedAtRef.current = ctx.currentTime - clamped
       setIsPlaying(true)
 
+      // Seek/Restart call this again while playing; without cancelling, each left its own loop
+      // running and Stop could only cancel the newest.
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
       const data = new Float32Array(analyser.fftSize)
       const tick = () => {
+        if (sourceRef.current !== source) return
         const elapsed = ctx.currentTime - startedAtRef.current
         setProgress(
           source.loop
@@ -1081,6 +1095,9 @@ export function PlayerPanel({
   }, [])
 
   const stopLive = useCallback(async () => {
+    // Invalidates any startLive() still in its awaits, so it can't open a device or install an
+    // engine after this stop — e.g. switching to Preview or closing the player mid-startup.
+    liveSessionRef.current++
     if (liveMeterRafRef.current !== null) {
       cancelAnimationFrame(liveMeterRafRef.current)
       liveMeterRafRef.current = null
@@ -1233,8 +1250,18 @@ export function PlayerPanel({
   const startLive = useCallback(async () => {
     setLiveError('')
     setLiveStarting(true)
+    let session = -1
+    // True once a newer stopLive()/startLive() has taken over. Checked after every await: past
+    // that point this call must not touch refs, the owner slot or state the newer one now owns.
+    const stale = (): boolean => liveSessionRef.current !== session
     try {
-      await stopLive()
+      // Read the session synchronously after stopLive() bumps it, not after the await — a second
+      // start racing this one would otherwise bump it again and both would think they're current.
+      const stopped = stopLive()
+      session = liveSessionRef.current
+      liveStartSessionRef.current = session
+      await stopped
+      if (stale()) return
 
       // Cross-tree mutex (docs/ir-lab-manager-build-plan.md section 8b/2) — IR mode owns its own
       // independent LiveEngine now too; refuse to open a second one (and a second mic stream)
@@ -1244,6 +1271,7 @@ export function PlayerPanel({
       }
 
       const modelResult = await window.api.readFileBinary(file.filePath)
+      if (stale()) return
       if (modelResult.error || !modelResult.data) {
         throw new Error(`Could not read the capture: ${modelResult.error ?? 'no data'}`)
       }
@@ -1252,6 +1280,7 @@ export function PlayerPanel({
       let preModelJson: string | null = null
       if (preCapturePath && preEnabled) {
         const preResult = await window.api.readFileBinary(preCapturePath)
+        if (stale()) return
         if (preResult.data) {
           preModelJson = new TextDecoder().decode(base64ToArrayBuffer(preResult.data))
         } else {
@@ -1261,8 +1290,23 @@ export function PlayerPanel({
       }
 
       const ir = await loadLiveIr()
+      if (stale()) return
+      // Decoded before the engine exists, so every await that a stop can land in is one this
+      // function checks itself. Once the engine is in liveEngineRef, stopLive() cancels it via
+      // engine.stop() instead.
+      const reverbIr =
+        reverbPath && reverb.mode === 'convolution'
+          ? await decodeImpulse(reverbPath).catch(() => null)
+          : null
+      const delayIr =
+        delayIrPath && delay.mode === 'convolution'
+          ? await decodeImpulse(delayIrPath).catch(() => null)
+          : null
+      if (stale()) return
 
-      const engine = new LiveEngine((message) => setLiveError(message))
+      const engine = new LiveEngine((message) => {
+        if (liveEngineRef.current === engine) setLiveError(message)
+      })
       liveEngineRef.current = engine
       await engine.start({
         deviceId: inputDeviceId,
@@ -1280,27 +1324,24 @@ export function PlayerPanel({
         echoLab,
         reverb,
         chorus: effectiveChorus,
-        reverbIr:
-          reverbPath && reverb.mode === 'convolution'
-            ? await decodeImpulse(reverbPath).catch(() => null)
-            : null,
-        delayIr:
-          delayIrPath && delay.mode === 'convolution'
-            ? await decodeImpulse(delayIrPath).catch(() => null)
-            : null,
+        reverbIr,
+        delayIr,
         // Same loudness target the offline preview uses, so switching between the two modes is
         // not a volume jump.
         normalizeGain: computeLiveNormalizeGain(
           typeof m.loudness === 'number' ? m.loudness : null
         ),
-        volume: volumeGain
+        volume: volumeGainRef.current
       })
+      if (stale()) return
       engine.setBypass(liveBypass)
 
       // Second cabinet slot (blend) is loaded separately after start() — LiveStartOptions only
       // wires slot A, matching every other existing caller of engine.start() unchanged.
       const irB = await loadLiveIrB()
+      if (stale()) return
       if (irB) await engine.setIrSlot('B', irB)
+      if (stale()) return
       engine.setBlend(irBlend)
 
       setLiveRunning(true)
@@ -1318,6 +1359,7 @@ export function PlayerPanel({
       tunerTrackerRef.current = tracker
       let nextTunerAt = 0
       const tick = () => {
+        if (liveEngineRef.current !== engine) return
         setLiveMeter(engine.readOutputPeak())
         if (eng.readInputPeak) setLiveInputMeter(eng.readInputPeak())
         // Meters want every frame; the tuner does not. Detection costs ~2.3ms on a 4096-sample
@@ -1334,10 +1376,12 @@ export function PlayerPanel({
       }
       liveMeterRafRef.current = requestAnimationFrame(tick)
     } catch (error) {
+      // Superseded: the stop/start that cancelled this one owns teardown and the error line.
+      if (error instanceof LiveStartCancelledError || stale()) return
       await stopLive()
       setLiveError(formatError(error))
     } finally {
-      setLiveStarting(false)
+      if (liveStartSessionRef.current === session) setLiveStarting(false)
     }
   }, [file.filePath, inputDeviceId, irMix, liveInputGainDb, liveBypass, loadLiveIr, loadLiveIrB, irBlend, stopLive, preCapturePath, preEnabled, preGainDb, fxPower])
 
@@ -1446,7 +1490,13 @@ export function PlayerPanel({
 
   useEffect(() => {
     return () => {
+      // Same invalidation as stopLive(): a start still in flight must not install an engine into
+      // an unmounted panel, and the meter loop must not outlive it.
+      liveSessionRef.current++
+      if (liveMeterRafRef.current !== null) cancelAnimationFrame(liveMeterRafRef.current)
+      liveMeterRafRef.current = null
       void liveEngineRef.current?.stop()
+      liveEngineRef.current = null
       releaseLiveEngine('nam')
     }
   }, [])
@@ -1787,7 +1837,8 @@ export function PlayerPanel({
   }, [outputDeviceId])
 
   useEffect(() => {
-    if (liveRunning) void startLive()
+    // Also while starting: a start already in flight is loading the PREVIOUS capture.
+    if (liveRunning || liveStarting) void startLive()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.filePath])
 
@@ -1796,7 +1847,8 @@ export function PlayerPanel({
   // cost as switching the main capture. Drive (preGainDb) is deliberately NOT a dependency here:
   // it ramps live via setPreGain below instead of restarting on every knob tick.
   useEffect(() => {
-    if (liveRunning) void startLive()
+    // Also while starting: a start already in flight is loading the PREVIOUS capture.
+    if (liveRunning || liveStarting) void startLive()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preCapturePath, preEnabled])
 

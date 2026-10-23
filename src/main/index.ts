@@ -7986,15 +7986,42 @@ app.whenReady().then(async () => {
   // IPC: Detect whether a non-NAM-Lab default handler is registered for .nam files
   ipcMain.handle('app:detectNamPlayer', async () => {
     try {
-      const { execSync } = await import('child_process')
+      const { execFileSync } = await import('child_process')
       if (process.platform === 'win32') {
-        const assoc = execSync('cmd /c assoc .nam', { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim()
-        if (!assoc.includes('=')) return false
-        const progId = assoc.split('=')[1].trim()
-        const ftype = execSync(`cmd /c ftype ${progId}`, { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim()
+        // `assoc`/`ftype` only see machine-wide classes, so a per-user association (how most
+        // installers and Explorer's "Open with" register) made ftype fail and print "File type
+        // 'NAM' not found" to the console. Read the registry instead, per-user choice first, with
+        // stderr piped so a missing key never reaches the console.
+        const reg = (args: string[]): string => {
+          try {
+            return execFileSync('reg', ['query', ...args], {
+              encoding: 'utf8',
+              timeout: 3000,
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe']
+            })
+          } catch {
+            return ''
+          }
+        }
+        const valueOf = (output: string, name: string): string | null => {
+          const line = output.split(/\r?\n/).find((l) => l.trim().startsWith(name))
+          const match = line?.match(/REG_(?:EXPAND_)?SZ\s+(.*)$/)
+          return match ? match[1].trim() : null
+        }
+        // `||` not `??`: an empty per-user default (seen in the wild) must fall through to the
+        // machine-wide one rather than end the lookup. The progId can contain spaces — NAM Lab's
+        // own is "NAM Capture" — which is what broke the old unquoted `ftype ${progId}`.
+        const progId =
+          valueOf(reg(['HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.nam\\UserChoice', '/v', 'ProgId']), 'ProgId') ||
+          valueOf(reg(['HKCR\\.nam', '/ve']), '(Default)') ||
+          valueOf(reg(['HKLM\\Software\\Classes\\.nam', '/ve']), '(Default)')
+        if (!progId) return false
+        const command = valueOf(reg([`HKCR\\${progId}\\shell\\open\\command`, '/ve']), '(Default)')
+        if (!command) return false
         const ourExe = process.execPath.replace(/\\/g, '/').toLowerCase()
-        const ftypeLower = ftype.replace(/\\/g, '/').toLowerCase()
-        return ftypeLower.includes('.exe') && !ftypeLower.includes(ourExe)
+        const commandLower = command.replace(/\\/g, '/').toLowerCase()
+        return commandLower.includes('.exe') && !commandLower.includes(ourExe)
       }
       // macOS / Linux: no reliable shell-only method â€” rely on manual path setting
       return false
