@@ -29,7 +29,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import * as fs from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { readNamLabResult, relinkNamLabResult, type NamLabResult } from './namCaptureResult'
+import { readNamLabResult, relinkNamLabResult, writeCaptureMetadataEdits, type NamLabResult } from './namCaptureResult'
 import { trainableInputLevelDbu } from '../../shared/namProjects'
 
 export { trainableInputLevelDbu }
@@ -833,7 +833,14 @@ export function setNamCaptureMetadata(
   }
   if (sets.length === 0) return getNamCaptureRow(db, itemId)
   db.prepare(`UPDATE nam_capture_item SET ${sets.join(', ')} WHERE item_id = ?`).run(...vals, itemId)
-  return getNamCaptureRow(db, itemId)
+  const row = getNamCaptureRow(db, itemId)
+  if (row) shareEditsWithIrLab(row)
+  return row
+}
+
+/** Tells IR Lab about metadata edited here (see writeCaptureMetadataEdits). */
+function shareEditsWithIrLab(row: NamCaptureRow): void {
+  if (row.recordingPath) writeCaptureMetadataEdits(row.recordingPath, row.effective, row.metadataEdited)
 }
 
 /**
@@ -885,6 +892,7 @@ export function applyProjectDefaults(
       .run(value, collectionId)
     itemsFilled += (result.changes as number) ?? 0
   }
+  if (itemsFilled > 0) for (const row of getNamProjectDetail(db, collectionId)?.captures ?? []) shareEditsWithIrLab(row)
   return { itemsFilled }
 }
 

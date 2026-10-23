@@ -296,3 +296,39 @@ export function copyModelIntoCaptureFolder(recordingWavPath: string, modelPath: 
     return null
   }
 }
+
+// ── Metadata edited here, for IR Lab (2026-10-23) ───────────────────────────────────────────────
+// `<dir>/<CaptureName>.nam-lab-metadata.json` beside the recording: the gear / tone / level values
+// as edited in NAM Lab (a key present with "" = deliberately cleared), so IR Lab can show them.
+// IR Lab's own sidecar is never written. Removed when nothing differs from IR Lab's values.
+
+export const NAM_LAB_METADATA_SUFFIX = '.nam-lab-metadata.json'
+
+export interface CaptureMetadataEdits {
+  modeledBy: string | null
+  gearMake: string | null
+  gearModel: string | null
+  gearType: string | null
+  toneType: string | null
+  inputLevelDbu: number | null
+  outputLevelDbu: number | null
+}
+
+export function namLabMetadataPathFor(recordingWavPath: string): string {
+  const stem = basename(recordingWavPath, extname(recordingWavPath))
+  return join(dirname(recordingWavPath), `${stem}${NAM_LAB_METADATA_SUFFIX}`)
+}
+
+/** Writes the edited values (or removes the file when `edited` is false). Best-effort. */
+export function writeCaptureMetadataEdits(recordingWavPath: string, values: CaptureMetadataEdits, edited: boolean, now = new Date()): void {
+  try {
+    const path = namLabMetadataPathFor(recordingWavPath)
+    if (!edited) {
+      fs.rmSync(path, { force: true })
+      return
+    }
+    writeAtomically(path, JSON.stringify({ schemaVersion: 1, ...values, editedAt: now.toISOString() }, null, 2) + '\n')
+  } catch {
+    // capture folder gone or read-only
+  }
+}

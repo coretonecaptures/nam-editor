@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
 import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults, trainableInputLevelDbu } from './namCaptureEnrichment'
-import { writeNamLabResult, namLabResultPathFor, readNamLabResult, captureTrainingStates, syncCaptureTrainingStatusFiles, namLabStatusPathFor, copyModelIntoCaptureFolder } from './namCaptureResult'
+import { writeNamLabResult, namLabResultPathFor, readNamLabResult, captureTrainingStates, syncCaptureTrainingStatusFiles, namLabStatusPathFor, copyModelIntoCaptureFolder, namLabMetadataPathFor } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
 const tmpDirs: string[] = []
@@ -676,5 +676,28 @@ describe('trained model inside the capture project (2026-10-23)', () => {
     const r = readNamLabResult(rec)!
     expect(r.projectModelPath).toBe('../Trained Models/lite/Clean.nam')
     expect(r.models?.[0].projectModelPath).toBe('../Trained Models/lite/Clean.nam')
+  })
+})
+
+describe('metadata edited in NAM Lab is shared with IR Lab (2026-10-23)', () => {
+  it('writes the edited values beside the recording, and removes them when they match IR Lab again', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const clean = getNamProjectDetail(db, ampA.collectionId)!.captures.find((c) => c.captureId === 'cap0001')!
+    const file = namLabMetadataPathFor(clean.recordingPath!)
+    expect(fs.existsSync(file)).toBe(false)
+
+    setNamCaptureMetadata(db, clean.itemId, { gearMake: 'Suhr', inputLevelDbu: 9.5 })
+    const shared = JSON.parse(fs.readFileSync(file, 'utf8'))
+    expect(shared.gearMake).toBe('Suhr')
+    expect(shared.inputLevelDbu).toBe(9.5)
+    expect(shared.gearModel).toBe('Bassman') // unchanged values travel too, so IR Lab shows one consistent set
+
+    setNamCaptureMetadata(db, clean.itemId, { gearMake: 'Fender', inputLevelDbu: 12.4 })
+    expect(fs.existsSync(file)).toBe(false)
   })
 })
