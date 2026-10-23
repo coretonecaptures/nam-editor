@@ -61,12 +61,13 @@ export default function AppRoot(): React.ReactElement {
   // intent on mount (appNav.consumePendingBatchNav) and opens the trainer on Batches.
   useEffect(() => onGoToTrainingBatches(() => setMode('nam')), [])
 
-  // IR Lab's "Manage in NAM Lab..." button -> namlab://project?id=<x> -> main process resolves
+  // IR Lab's "Open in NAM Lab" button -> namlab://project?id=<x> -> main process resolves
   // it and either pushes namlab:openProject (already running) or we pull it once on mount
   // (cold launch, avoids the did-finish-load subscribe race). Either way it lands in appNav's
-  // pending-nav slot and flips this shell to NAM Projects mode — unless the user has hidden that
-  // mode, in which case a deep link shouldn't silently re-open it behind their back.
-  useEffect(() => onGoToNamProject(() => { if (enabledModes.namProjects) setMode('nam-projects') }), [enabledModes.namProjects])
+  // pending-nav slot and flips this shell to NAM Projects mode, even when that mode is hidden from
+  // the rail: like Train, it is an explicit request from the other app, and doing nothing left
+  // IR Lab's button looking broken (its receipt had already said "received").
+  useEffect(() => onGoToNamProject(() => setMode('nam-projects')), [])
   useEffect(() => {
     const unsubscribe = window.api.onNamLabOpenProject((projectId) => goToNamProject(projectId))
     window.api.getPendingNamLabProject().then((projectId) => {

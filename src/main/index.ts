@@ -26,6 +26,10 @@ const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 let pendingNamLabProjectId: string | null = null
 let pendingNamLabTrain: NamLabTrainIntent | null = null
 let pendingNamLabLibrary: string | null = null
+// True once the current window's renderer has pulled its pending links, i.e. its namlab:*
+// listeners exist. Before that, webContents.send went to a page with no listener and the link was
+// lost while the receipt told IR Lab "received" (window still loading, 2026-10-23 audit).
+let namLabRendererReady = false
 
 function handleNamLabUrl(urlString: string): void {
   const op = parseHandoffOp(urlString)
@@ -37,11 +41,17 @@ function handleNamLabUrl(urlString: string): void {
     receipt('unknown', false, 'NAM Lab did not recognise the link IR Lab sent -- update NAM Lab.')
     return
   }
-  const live = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-  if (live) {
-    if (live.isMinimized()) live.restore()
-    live.focus()
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  if (window) {
+    if (window.isMinimized()) window.restore()
+    window.focus()
+  } else if (app.isReady()) {
+    // macOS keeps running with every window closed: nothing would ever pull a parked link until
+    // the user clicked the Dock icon. Open the window; its renderer pulls the link on mount.
+    createWindow()
   }
+  // Push only to a renderer that is listening; otherwise park the link for its first pull.
+  const live = window && namLabRendererReady ? window : null
   if (parsed.route === 'project') {
     if (live) live.webContents.send('namlab:openProject', parsed.id)
     else pendingNamLabProjectId = parsed.id
@@ -124,7 +134,10 @@ if (!gotLock) {
 
 // Cold launch on Windows/Linux: the OS passes the namlab:// URL as a plain argv entry, same as any
 // other "open with" association. macOS never reaches this path (open-url covers it there instead).
-const coldLaunchNamLabArg = process.argv.find((arg) => arg.startsWith('namlab://'))
+// Only in the instance that holds the lock: a second instance hands its argv to the first through
+// 'second-instance' and quits, and handling it here too wrote a duplicate receipt (and could show
+// the "folder does not exist" dialog twice).
+const coldLaunchNamLabArg = gotLock ? process.argv.find((arg) => arg.startsWith('namlab://')) : undefined
 if (coldLaunchNamLabArg) handleNamLabUrl(coldLaunchNamLabArg)
 
 // Compares two semver strings; pre-release order: alpha < beta < rc < release
@@ -5610,6 +5623,7 @@ function saveWinState(): void {
 }
 
 function createWindow(): void {
+  namLabRendererReady = false
   log('loadWinState...')
   const winState = loadWinState()
   log(`winState: ${JSON.stringify(winState)}`)
@@ -8270,6 +8284,7 @@ app.whenReady().then(async () => {
   // cold launch (IR Lab's "Manage in NAM Lab..." button) — pushing via webContents.send would
   // race React's subscription on first launch.
   ipcMain.handle('app:getPendingNamLabProject', () => {
+    namLabRendererReady = true
     const id = pendingNamLabProjectId
     pendingNamLabProjectId = null
     return id
@@ -8277,6 +8292,7 @@ app.whenReady().then(async () => {
 
   // Same pull model for IR Lab's namlab://library?path=... ("Open NAM library in NAM Lab").
   ipcMain.handle('app:getPendingNamLabLibrary', () => {
+    namLabRendererReady = true
     const path = pendingNamLabLibrary
     pendingNamLabLibrary = null
     return path
@@ -8284,6 +8300,7 @@ app.whenReady().then(async () => {
 
   // Same pull model for IR Lab's namlab://train?... ("Train in NAM Lab").
   ipcMain.handle('app:getPendingNamLabTrain', () => {
+    namLabRendererReady = true
     const intent = pendingNamLabTrain
     pendingNamLabTrain = null
     return intent
