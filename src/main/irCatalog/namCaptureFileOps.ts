@@ -24,7 +24,7 @@
  * recording's, so nothing inside it needs to change). Rolls back the WAV rename if any sidecar
  * step fails, so a partial rename can never leave the WAV and its sidecars under different names —
  * NAM Capture's same-basename guarantee (this file's own comment above, and IR Lab's own
- * `NamCaptureStore.cpp`) is exactly the invariant a partial rename would break.
+ * IR Lab) is exactly the invariant a partial rename would break.
  *
  * **Not independently verified against the real IR Lab app** (this environment can build against
  * the source but not run it) — the WAV/sidecar consistency above is confirmed directly from

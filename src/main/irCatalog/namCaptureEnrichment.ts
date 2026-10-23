@@ -3,7 +3,7 @@
  * labProjectEnrichment.ts. Runs in the same slot in the scan IPC handler, right after
  * enrichLabProjects. See docs/nam-capture-import-plan-2026-08-29.md §2 and IR Lab's
  * docs/nam_lab_metadata_handoff_2026-08-29.md (both "UPDATE 2026-08-30" sections) for the
- * confirmed data contract, authoritative in ir-lab's NamCaptureStore.cpp.
+ * confirmed data contract, as IR Lab writes it.
  *
  * schemaVersion 2 on-disk layout (per project outputRoot):
  *

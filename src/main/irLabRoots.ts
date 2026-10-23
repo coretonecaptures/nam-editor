@@ -9,7 +9,7 @@
  * the send succeeded here. This reads the same three settings IR Lab itself reads, so we can warn
  * in THIS app instead.
  *
- * `LiveAuditionSettingsStore::storeFile()` (ir-lab/src/audio/LiveAuditionSettingsStore.cpp) is
+ * IR Lab's settings file is
  * `<userApplicationDataDirectory>/IR Lab/live-audition-settings.json`. JUCE's
  * userApplicationDataDirectory is `~/Library` on macOS, NOT Electron's appData
  * (`~/Library/Application Support`): reading under appData found nothing on a Mac, so every

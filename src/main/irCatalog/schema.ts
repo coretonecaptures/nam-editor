@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS nam_capture_item (
   amp_channel       TEXT, boost_pedal TEXT, amp_settings TEXT,
   pedal_settings    TEXT, amp_switches TEXT,
   -- Pre-training facts, written by namCaptureEnrichment.ts straight from IR Lab's own
-  -- nam-capture.json (confirmed against NamCaptureStore.h/.cpp; see
+  -- nam-capture.json (confirmed against files IR Lab writes; see
   -- docs/nam-capture-import-plan-2026-08-29.md §2). Everything above this line is post-training
   -- metadata that only the trainer-completion path or the manual/Excel workflow ever fills;
   -- everything below is known the moment the capture folder is scanned. The importer inserts a

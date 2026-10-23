@@ -2,7 +2,7 @@
  * IR Lab Project enrichment (docs/ir-lab-manager-build-plan.md section 8c) — a third pass, same
  * slot as Phase 3's applyVendorParsers, run after importLibrary/finalizeIndexes/applyVendorParsers
  * in the scan IPC handler. Reads the real on-disk layout IR Lab itself writes (confirmed against
- * the actual source this session — SessionStore.h/.cpp, ProjectStore.h/.cpp, Project.h in
+ * real IR Lab project files this session, in
  * IR Lab's own (private, separate) source repo — not guessed):
  *
  *   <projectFolder>/<deliverable>.wav              -- flat, already a normal `item` row
@@ -38,7 +38,7 @@ export interface ProjectJson {
   name?: string
   createdAt?: string
   captureIndex?: CaptureIndexEntry[]
-  // "Project Details" fields, added 2026-08-26 (ir-lab's Project.h/ProjectStore.cpp, confirmed
+  // "Project Details" fields, added 2026-08-26 (IR Lab's project file, confirmed
   // against the real source — see this file's own header comment for why that matters here).
   // Entered once per project; cabinet/speaker fall back to these at query time whenever a
   // capture's own field is blank (queryLibrary.ts's 3-way COALESCE) rather than being copied in.
@@ -52,7 +52,7 @@ export interface ProjectJson {
 }
 
 export interface SessionJson {
-  // CaptureMetadata, written into session.json's "metadata" key (SessionStore.cpp's
+  // CaptureMetadata, written into session.json's "metadata" key (IR Lab's
   // writeSessionJson/metadataJson — confirmed directly in source, not inferred from the handoff
   // doc's own wording, which describes this as living in analysis.json). The 2026-08-26 additions
   // below are just as blank/absent-safe as the original six: an older session.json with none of
@@ -332,7 +332,7 @@ export function enrichLabProjects(db: DatabaseSync, libraryRootId: number, folde
       // Mic B: the handoff doc's own recommended gate ("check
       // ProcessingRecipe.multiMicBlendWeightRight > 0.01 before treating Mic B data as present")
       // can't be implemented here — confirmed against the real source
-      // (session/ProcessingRecipe.h/SessionStore.cpp's recipeJson()) that multiMicBlendWeightRight
+      // (IR Lab's processing recipe) that multiMicBlendWeightRight
       // is never actually serialized into analysis.json at all; it only exists as in-memory state
       // during a live capture. On disk, "the field is non-blank" is the only signal available, so
       // that's what writeField already does (skip when falsy) — a stale/default Mic B value could

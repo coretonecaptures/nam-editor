@@ -1,6 +1,6 @@
 /**
  * The `namlab://` receiving side — the reverse of the `irlab://` scheme this app already SENDS
- * to IR Lab. IR Lab's own "Manage in NAM Lab..." button (ir-lab MainComponent.cpp) fires
+ * to IR Lab. IR Lab's own "Manage in NAM Lab..." button fires
  * `namlab://project?id=<projectId>`. Pure and side-effect-free so it's testable without Electron;
  * `index.ts` wires the result into window focus + appNav's cross-mode nav.
  */

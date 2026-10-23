@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { parseWavHeader, describeWavHeader, formatSampleRate } from './wavHeader'
 
 /** Builds a real, spec-shaped `bext` chunk (EBU Tech 3285): fixed-width ASCII fields, NUL-padded,
- * for the two IR Lab actually writes into. Field sizes match ir-lab's own WavIO.cpp/JUCE's
+ * for the two IR Lab actually writes into. Field sizes match the bext spec and JUCE's
  * createBWAVMetadata layout: Description 256 bytes, Originator 32 bytes, then the rest of the
  * fixed 602-byte body zeroed (OriginatorReference/OriginationDate/etc. — irrelevant here). */
 function makeBextChunk(description: string, originator: string): { id: string; size: number; body: Buffer } {

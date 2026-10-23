@@ -1,7 +1,7 @@
 /**
  * Parses IR Lab's own embedded capture metadata out of a WAV's BWF `bext` chunk fields (read by
  * wavHeader.ts's parseWavHeader, from the same 64KB buffer the scan already has in hand — no extra
- * I/O). Format confirmed against the ir-lab repo itself (WavIO.cpp's `buildBwavMetadata`,
+ * I/O). Format confirmed against files IR Lab writes (
  * documented in that repo's docs/ir-lab-manager-shared-catalog-schema.md): Description holds
  * "Key: value | Key: value | ..." pairs, blank fields omitted, in order Cabinet, Speaker,
  * Microphone, Position, CaptureType, MicADistance, Notes — though this parser splits on "|" and

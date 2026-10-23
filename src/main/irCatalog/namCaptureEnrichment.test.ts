@@ -20,7 +20,7 @@ afterEach(() => {
 })
 
 /**
- * schemaVersion 2 on-disk shape, per NamCaptureStore.cpp:
+ * schemaVersion 2 on-disk shape IR Lab writes:
  *   <root>/<Project>/_excitations/<shared>.wav
  *   <root>/<Project>/NAM Captures/<Capture Name>.wav + <Capture Name>.nam-capture.json
  * `excitation` in the sidecar is a relative path with `../` into _excitations/.

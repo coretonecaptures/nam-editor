@@ -21,7 +21,7 @@ afterEach(() => {
 })
 
 /** Builds a fixture matching the exact on-disk layout IR Lab itself writes, confirmed against
- * the real ir-lab source this session (SessionStore.h/.cpp, ProjectStore.h/.cpp, Project.h,
+ * IR Lab's real project files this session (
  * docs/ir-lab-session-file-format.md) — not guessed. Capture folder is flat, per ir-lab's
  * 2026-08-27 Phase 2 storage redesign (no nested captures/<captureId>/ subfolder). One Project
  * folder ("Marshall Session") with one capture/deliverable and two variants (one current, one
