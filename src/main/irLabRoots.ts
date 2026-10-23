@@ -2,7 +2,7 @@
  * Reads IR Lab's own configured library folders so "Send to IR Lab" can catch the exact failure
  * IR Lab's own `blend` route handler enforces, before firing the handoff rather than after.
  *
- * IR Lab's `ExternalHandoffRouter.cpp` (security audit 2026-08-31, LOW-1) accepts an `item=` path
+ * IR Lab's link handler (security audit 2026-08-31, LOW-1) accepts an `item=` path
  * into the blend route only when it resolves under one of three folders the user configured there
  * — Cab IR, Reverb IR, or DI. Anything else is silently dropped and IR Lab shows its own banner
  * ("pointing outside your IR library — ignored"), in the OTHER app, after the user already thinks
@@ -81,7 +81,7 @@ export function readIrLabNamFolder(): string | null {
 }
 
 /** Case-insensitive on Windows (NTFS paths are case-preserving, not case-sensitive) — matches how
- * `juce::File::operator==` compares on that platform. Elsewhere, exact. Symlinks are resolved
+ * IR Lab compares paths on that platform. Elsewhere, exact. Symlinks are resolved
  * first when the path exists, as IR Lab's router canonicalises both sides (2026-10-10): a file
  * reached through a link would otherwise pass here and be refused there. */
 function normalize(p: string): string {
@@ -94,7 +94,7 @@ function normalize(p: string): string {
   return process.platform === 'win32' ? r.toLowerCase() : r
 }
 
-/** Mirrors `ExternalHandoffRouter.cpp`'s own `file == root || file.isAChildOf(root)` check. */
+/** Mirrors IR Lab's own "inside one of these folders" check. */
 export function isUnderAnyRoot(absPath: string, roots: string[]): boolean {
   const target = normalize(absPath)
   return roots.some((root) => {

@@ -208,12 +208,11 @@ export interface NamCaptureNameConflict {
 }
 
 /**
- * The input level from a sidecar's calibration block that may go into a trained .nam. IR Lab's
- * Guided (no meter) method cannot establish the send level and, since 2026-10-22 (ir-lab
- * 13632549), leaves inputLevelDbu out. A Guided sidecar written before then still carries one,
- * derived from a bare loopback (it could be 4 dB off) and labelled "interface-spec-verified"; IR
- * Lab now downgrades those profiles to an estimate on load but never rewrote the sidecars. So a
- * Guided input level is shown as provenance but not seeded into the model. Precision passes.
+ * The input level from a sidecar's calibration block that may go into a trained .nam. A sidecar
+ * whose calibration method is "guided" (no meter) does not establish the input level: current IR
+ * Lab builds leave inputLevelDbu out for it, and older ones wrote a value IR Lab no longer treats
+ * as measured. Such a value is shown as provenance but never seeded into a model; "precision"
+ * (metered) values pass.
  */
 export function trainableInputLevelDbu(cal: { inputLevelDbu?: unknown; method?: unknown }): number | null {
   const value = cal.inputLevelDbu

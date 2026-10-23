@@ -583,7 +583,7 @@ describe('readiness and project membership follow IR Lab (2026-10-23)', () => {
     expect(countIn('Amp A')).toBe(2)
     expect(countIn('Amp B')).toBe(2)
 
-    // IR Lab's CaptureMover rewrites projectId/projectName in place for a move.
+    // Moving a capture to another project in IR Lab rewrites projectId/projectName in its sidecar.
     const moved = join(capturesDir(root, 'Amp A'), 'Amp A — Clean.nam-capture.json')
     const json = JSON.parse(fs.readFileSync(moved, 'utf-8'))
     json.projectId = 'proj-b'

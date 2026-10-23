@@ -31,7 +31,7 @@ export type IrLabPayload =
   // rather than overloading `blend` — same reasoning the audit itself gives: these are different
   // workflows. Capped at 4 items by the caller (irLibraryIpc.ts): 1-2 fill Cab A/B on a normal
   // rig, 3-4 fill both cab slots on each lane of a stereo rig. NOT YET IMPLEMENTED on IR Lab's
-  // receiving side (ExternalHandoffRouter.cpp only handles session/blend/nam/namgroup/project as
+  // receiving side (it only handled session/blend/nam/namgroup/project as
   // of this comment) — see docs/ir-lab-play-in-ir-lab-spec-2026-09-25.md for the IR Lab-side
   // contract this route needs.
   | { kind: 'playcab'; items: string[] }

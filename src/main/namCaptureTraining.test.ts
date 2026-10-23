@@ -135,8 +135,8 @@ describe('buildNamCaptureImportPayloads', () => {
   })
 
   it('a calibrated capture keeps a side IR Lab left out as null, never the trainer-tab default (2026-10-23)', async () => {
-    // IR Lab's Guided method writes a calibration block with outputLevelDbu but no inputLevelDbu:
-    // the send level was not established. The .nam must not claim the trainer default for it.
+    // A calibration block with outputLevelDbu but no inputLevelDbu: the input level was not
+    // established. The .nam must not claim the trainer default for it.
     const guided = item('guided', { calibrated: true, inputLevelDbu: null, outputLevelDbu: 8.0 })
     const { payloads } = await buildNamCaptureImportPayloads([guided], baseConfig, defaults, stdProfile)
     expect(payloads[0].inputLevelDbu).toBeNull()

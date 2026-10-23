@@ -24,7 +24,7 @@ export function parseNamLabUrl(urlString: string): NamLabUrl | null {
   }
   if (url.protocol !== 'namlab:') return null
   // Node's URL treats "namlab://project?id=x" as host="project" (same shape IR Lab's own
-  // ExternalHandoffRouter.cpp reads via juce::URL::getDomain() for its irlab:// routes).
+  // IR Lab reads its irlab:// links).
   const route = url.hostname
   if (route === 'project') {
     const id = url.searchParams.get('id')

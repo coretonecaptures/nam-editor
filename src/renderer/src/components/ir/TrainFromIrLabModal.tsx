@@ -53,9 +53,9 @@ export function hasTrainingFiles(c: NamCaptureRow): boolean {
 }
 
 /** Clean captures start ticked. Not ticked: anything trained before (by result file or by name),
- * a capture IR Lab's readiness check blocked (silent, clipped, misaligned -- IR Lab's own "Train N
- * untrained" leaves those out too), and a synthetic one (NAM Projects' own panel defaults those
- * off). Each can still be ticked by hand. */
+ * a capture whose sidecar readiness level is "block" (IR Lab leaves those out of its own train
+ * count too), and a synthetic one (NAM Projects' own panel defaults those off). Each can still be
+ * ticked by hand. */
 export function defaultTicked(c: NamCaptureRow, conflict: NamCaptureNameConflict | undefined): boolean {
   return hasTrainingFiles(c) && !c.trained && !conflict && c.readiness?.level !== 'block' && !c.synthetic
 }

@@ -121,7 +121,7 @@ describe('checkNamAllowlist', () => {
 })
 
 describe('isUnderAnyRoot through a symlink', () => {
-  // IR Lab canonicalises both the file and its folder (ExternalHandoffRouter, 2026-10-10). A file
+  // IR Lab resolves links in both the file and its folder before checking. A file
   // whose path runs through a link out of the folder must fail here too, not only in IR Lab.
   it('rejects a path that only looks inside the root because of a link', () => {
     const base = mkdtempSync(join(tmpdir(), 'irlabroots-'))

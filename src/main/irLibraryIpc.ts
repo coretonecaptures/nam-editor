@@ -609,7 +609,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   // files, so the same three configured folders apply) and the same 4-item cap `buildIrLabUrl`
   // already enforces — checked again here so a caller sending more than 4 gets a clear reason
   // instead of a URL that silently truncates. NOT YET RECEIVED by IR Lab's own
-  // ExternalHandoffRouter.cpp as of this comment — see docs/ir-lab-play-in-ir-lab-spec-2026-09-25.md.
+  // IR Lab as of this comment — see docs/ir-lab-play-in-ir-lab-spec-2026-09-25.md.
   ipcMain.handle('irLibrary:sendPlayCabToIrLab', async (_event, itemIds: string[]) => {
     if (itemIds.length === 0) return { success: false, reason: 'No items selected.' }
     if (itemIds.length > 4) {
@@ -657,7 +657,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
 
     return sendToIrLab({ kind: 'playcab', items: absPaths })
   })
-  // The other two handoff routes IR Lab's ExternalHandoffRouter has always supported
+  // The other two handoff routes IR Lab has always accepted
   // (irlab://session, irlab://project) — build plan section 11. Both payloads are just IDs IR Lab
   // already knows how to resolve through its own SessionStore/ProjectStore; nothing catalog-
   // specific to look up here beyond what the caller already has on screen (a capture's captureId,
@@ -906,7 +906,7 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
     if (!items || items.length === 0) return { success: false, reason: 'Nothing to send — the group is empty.' }
     const paths = items.map((i) => i.path)
 
-    // Pre-flight the SAME allowlist IR Lab's own ExternalHandoffRouter enforces
+    // Pre-flight the SAME allowlist IR Lab itself enforces
     // (LiveAuditionSettingsStore::defaultNamFolder()) — catches the exact failure mode A2/I2
     // already fixed for `blend` (a mismatch reported in the OTHER app, after this one already
     // said "sent"), applied here to the nam/namgroup routes instead.

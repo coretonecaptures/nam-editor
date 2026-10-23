@@ -44,7 +44,7 @@ const KEY_TO_FIELD: Record<string, keyof Omit<BwfCaptureMetadata, 'micADistance'
 }
 
 /** "3.50in" / "3.5cm" -> { value: 3.5, unit: 'in' }. Returns null for anything that doesn't match
- * IR Lab's own format (WavIO.cpp: `juce::String(value, 2) + unit`, unit always "in" or "cm"). */
+ * IR Lab's own format: the value with 2 decimals followed by the unit, always "in" or "cm". */
 function parseMicADistanceToken(token: string): { value: number; unit: string } | null {
   const match = /^([\d.]+)(in|cm)$/i.exec(token.trim())
   if (!match) return null

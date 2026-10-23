@@ -258,7 +258,7 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
         str(hint.gearModel),
         str(hint.gearType),
         str(hint.toneType),
-        // Input: compared against the PREVIOUS seed, which already applied the legacy-Guided rule.
+        // Input: compared against the PREVIOUS seed, which already applied trainableInputLevelDbu.
         previousInputSeed(recordingItem.id),
         trainableInputLevelDbu(cal),
         num(cal.outputLevelDbu),
