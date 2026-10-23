@@ -63,6 +63,7 @@ function makeCapture(overrides: Partial<NamCaptureRow> = {}): NamCaptureRow {
     result: null,
     modelFile: null,
     graphExists: false,
+    readiness: null,
     ...overrides
   }
 }
@@ -335,6 +336,10 @@ describe('Train from IR Lab — capture resolution and default ticks', () => {
     expect(defaultTicked(a, conflict)).toBe(false) // name looks trained before
     expect(defaultTicked(b, undefined)).toBe(false) // result file says trained
     expect(defaultTicked(c, undefined)).toBe(false) // no WAVs
+    // IR Lab's readiness block and synthetic captures start unticked (2026-10-23); warn does not.
+    expect(defaultTicked({ ...a, readiness: { level: 'block', reasons: ['Return is silent'] } }, undefined)).toBe(false)
+    expect(defaultTicked({ ...a, readiness: { level: 'warn', reasons: ['Low level'] } }, undefined)).toBe(true)
+    expect(defaultTicked({ ...a, synthetic: true }, undefined)).toBe(false)
   })
 })
 

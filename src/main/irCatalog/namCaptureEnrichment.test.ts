@@ -550,3 +550,52 @@ describe('IR Lab changes after the first scan (2026-10-23)', () => {
     expect(trainableInputLevelDbu({ inputLevelDbu: 12.4, method: 'guided' })).toBeNull()
   })
 })
+
+describe('readiness and project membership follow IR Lab (2026-10-23)', () => {
+  const capturesDir = (root: string, project: string): string => join(root, project, 'NAM Captures')
+
+  it("stores IR Lab's readiness verdict and reasons", async () => {
+    const { root } = makeFixture()
+    const sidecar = join(capturesDir(root, 'Amp A'), 'Amp A — Clean.nam-capture.json')
+    const json = JSON.parse(fs.readFileSync(sidecar, 'utf-8'))
+    json.readiness = { level: 'block', reasons: ['Return is silent', 'Peak above 0 dBFS'] }
+    fs.writeFileSync(sidecar, JSON.stringify(json))
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+    const ampA = listNamProjects(db).find((p) => p.name === 'Amp A')!
+    const rows = getNamProjectDetail(db, ampA.collectionId)!.captures
+    expect(rows.find((c) => c.captureId === 'cap0001')!.readiness).toEqual({ level: 'block', reasons: ['Return is silent', 'Peak above 0 dBFS'] })
+    expect(rows.find((c) => c.captureId === 'cap0002')!.readiness).toBeNull()
+  })
+
+  it('a capture moved to another project in IR Lab leaves the old one; a deleted one disappears', async () => {
+    const { root } = makeFixture()
+    const db = new DatabaseSync(':memory:')
+    createCoreSchema(db)
+    const stats = await importLibrary(db, root, 'test-root', { skipQuickHash: true })
+    enrichNamCaptures(db, stats.libraryRootId)
+    const countIn = (name: string): number => {
+      const project = listNamProjects(db).find((p) => p.name === name)
+      return project ? getNamProjectDetail(db, project.collectionId)!.captures.length : 0
+    }
+    expect(countIn('Amp A')).toBe(2)
+    expect(countIn('Amp B')).toBe(2)
+
+    // IR Lab's CaptureMover rewrites projectId/projectName in place for a move.
+    const moved = join(capturesDir(root, 'Amp A'), 'Amp A — Clean.nam-capture.json')
+    const json = JSON.parse(fs.readFileSync(moved, 'utf-8'))
+    json.projectId = 'proj-b'
+    json.projectName = 'Amp B'
+    fs.writeFileSync(moved, JSON.stringify(json))
+    enrichNamCaptures(db, stats.libraryRootId)
+    expect(countIn('Amp A')).toBe(1)
+    expect(countIn('Amp B')).toBe(3)
+
+    // Deleting the sidecar (IR Lab's deleteCapture removes it with the WAV) drops the capture.
+    fs.rmSync(moved)
+    enrichNamCaptures(db, stats.libraryRootId)
+    expect(countIn('Amp B')).toBe(2)
+  })
+})

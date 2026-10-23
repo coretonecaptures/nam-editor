@@ -65,6 +65,7 @@ interface NamCaptureJson {
     profileName?: string
     calibratedAt?: string
   }
+  readiness?: { level?: string; reasons?: string[] }
   modelMetadataSuggested?: {
     name?: string
     modeledBy?: string
@@ -124,6 +125,7 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
        excitation_path = ?, recording_path = ?, excitation_source_name = ?, stimulus_sha256 = ?,
        calibration_input_dbu = ?, calibration_output_dbu = ?,
        calibration_method = ?, calibration_confidence = ?, calibration_profile_name = ?, calibrated_at = ?,
+       readiness_level = ?, readiness_reasons = ?,
        suggested_name = ?, suggested_modeled_by = ?, suggested_gear_make = ?, suggested_gear_model = ?,
        suggested_gear_type = ?, suggested_tone_type = ?,
        modeled_by       = CASE WHEN modeled_by IS NULL OR modeled_by IS suggested_modeled_by THEN ? ELSE modeled_by END,
@@ -162,6 +164,10 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
   // projectId -> collection.id, so N captures sharing a project only touch `collection` once.
   const projectCollectionIds = new Map<string, string>()
   const seenProjectIds = new Set<string>()
+  // Every (project, capture) membership this scan confirmed. Anything else in this root's NAM
+  // projects is a capture IR Lab moved to another project or deleted: it is removed below, so a
+  // moved capture stops showing in both projects and a deleted one is no longer offered to train.
+  const confirmedMembership = new Set<string>()
 
   const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
   const str = (v: unknown): string | null => {
@@ -233,6 +239,10 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
         str(cal.confidence),
         str(cal.profileName),
         str(cal.calibratedAt),
+        str(capture.readiness?.level),
+        Array.isArray(capture.readiness?.reasons)
+          ? JSON.stringify(capture.readiness!.reasons!.filter((r): r is string => typeof r === 'string'))
+          : null,
         // modelMetadataSuggested — the IR Lab hint, verbatim mirror. Written only when the
         // sidecar actually had the block (suggested_name defaults to the capture name, so it
         // can't be the "has hints" signal).
@@ -295,6 +305,7 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
       }
 
       upsertCollectionItem.run(collectionId, recordingItem.id)
+      confirmedMembership.add(`${collectionId}\u0000${recordingItem.id}`)
 
       if (!seenProjectIds.has(projectId)) {
         seenProjectIds.add(projectId)
@@ -304,6 +315,17 @@ export function enrichNamCaptures(db: DatabaseSync, libraryRootId: number): NamC
       if (isSynthetic) syntheticCaptures++
     }
   }
+
+  const memberships = db
+    .prepare(
+      `SELECT ci.collection_id AS collectionId, ci.item_id AS itemId FROM collection_item ci
+         JOIN collection c ON c.id = ci.collection_id
+        WHERE c.library_root_id = ? AND c.kind = 'nam_project'`
+    )
+    .all(libraryRootId) as Array<{ collectionId: string; itemId: string }>
+  const removeMembership = db.prepare(`DELETE FROM collection_item WHERE collection_id = ? AND item_id = ?`)
+  for (const m of memberships)
+    if (!confirmedMembership.has(`${m.collectionId}\u0000${m.itemId}`)) removeMembership.run(m.collectionId, m.itemId)
 
   return { projectsFound, capturesEnriched, syntheticCaptures }
 }
@@ -385,6 +407,10 @@ export interface NamCaptureRow {
   modelFile: FileFacts | null
   /** true when `result.graphPath` exists on disk. */
   graphExists: boolean
+  /** IR Lab's own pre-save check: 'pass' | 'warn' | 'block' (silent, clipped, misaligned...), with
+   * its reasons. Null when the sidecar predates it. A 'block' capture is not ticked for training
+   * by default, matching IR Lab's own "Train N untrained" count. */
+  readiness: { level: string; reasons: string[] } | null
 }
 
 export interface NamProjectSummary {
@@ -437,6 +463,8 @@ function folderPathFromRecording(recordingPath: string | null): string | null {
 }
 
 interface CaptureQueryRow {
+  readinessLevel: string | null
+  readinessReasons: string | null
   itemId: string
   captureId: string | null
   captureName: string | null
@@ -553,7 +581,18 @@ function mapCaptureRow(row: CaptureQueryRow): NamCaptureRow {
     trained: result != null,
     result,
     modelFile: statFacts(result?.outputModelPath ?? null),
-    graphExists: statFacts(result?.graphPath ?? null) != null
+    graphExists: statFacts(result?.graphPath ?? null) != null,
+    readiness: row.readinessLevel ? { level: row.readinessLevel, reasons: parseReasons(row.readinessReasons) } : null
+  }
+}
+
+function parseReasons(json: string | null): string[] {
+  if (!json) return []
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return Array.isArray(parsed) ? parsed.filter((r): r is string => typeof r === 'string') : []
+  } catch {
+    return []
   }
 }
 
@@ -574,7 +613,8 @@ const CAPTURE_SELECT = `
          nc.suggested_gear_type as suggestedGearType, nc.suggested_tone_type as suggestedToneType,
          nc.modeled_by as effModeledBy, nc.gear_make as effGearMake, nc.gear_model as effGearModel,
          nc.gear_type as effGearType, nc.tone_type as effToneType,
-         nc.input_level_dbu as effInputDbu, nc.output_level_dbu as effOutputDbu
+         nc.input_level_dbu as effInputDbu, nc.output_level_dbu as effOutputDbu,
+         nc.readiness_level as readinessLevel, nc.readiness_reasons as readinessReasons
   FROM collection_item
   JOIN item ON item.id = collection_item.item_id
   LEFT JOIN nam_capture_item nc ON nc.item_id = item.id

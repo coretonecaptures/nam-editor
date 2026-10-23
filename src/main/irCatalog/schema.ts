@@ -593,7 +593,10 @@ function runMigrations(db: DatabaseSync): void {
       ['calibration_input_dbu', 'REAL'],
       ['calibration_output_dbu', 'REAL'],
       ['excitation_source_name', 'TEXT'],
-      ['stimulus_sha256', 'TEXT']
+      ['stimulus_sha256', 'TEXT'],
+      // 2026-10-23: IR Lab's readiness verdict ('pass' | 'warn' | 'block') + reasons (JSON array).
+      ['readiness_level', 'TEXT'],
+      ['readiness_reasons', 'TEXT']
     ] as const) {
       if (!have.has(name)) db.exec(`ALTER TABLE nam_capture_item ADD COLUMN ${name} ${type}`)
     }

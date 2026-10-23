@@ -52,9 +52,12 @@ export function hasTrainingFiles(c: NamCaptureRow): boolean {
   return !!c.excitationPath && !!c.recordingPath
 }
 
-/** Clean captures start ticked; anything trained before (by result file or by name) does not. */
+/** Clean captures start ticked. Not ticked: anything trained before (by result file or by name),
+ * a capture IR Lab's readiness check blocked (silent, clipped, misaligned -- IR Lab's own "Train N
+ * untrained" leaves those out too), and a synthetic one (NAM Projects' own panel defaults those
+ * off). Each can still be ticked by hand. */
 export function defaultTicked(c: NamCaptureRow, conflict: NamCaptureNameConflict | undefined): boolean {
-  return hasTrainingFiles(c) && !c.trained && !conflict
+  return hasTrainingFiles(c) && !c.trained && !conflict && c.readiness?.level !== 'block' && !c.synthetic
 }
 
 function fmtDate(iso: string | null | undefined): string {
@@ -187,6 +190,9 @@ export function TrainFromIrLabModal({
             if (conflict?.existingFilePath) reasons.push(`${fileName(conflict.existingFilePath)} already exists in the output folder`)
             if (conflict?.duplicateInBatch) reasons.push('Same model name as another capture in this batch')
             if (!files) reasons.push('Missing its WAV files — can’t train')
+            if (c.readiness?.level === 'block')
+              reasons.push(`IR Lab flagged it not ready to train${c.readiness.reasons.length ? `: ${c.readiness.reasons.join('; ')}` : ''}`)
+            if (c.synthetic) reasons.push('Synthetic (built from an IR, not a recording)')
             return (
               <label
                 key={c.itemId}

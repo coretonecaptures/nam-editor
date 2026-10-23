@@ -80,6 +80,10 @@ export interface NamCaptureRow {
   result: NamLabResult | null
   modelFile: FileFacts | null
   graphExists: boolean
+  /** IR Lab's own pre-save check: 'pass' | 'warn' | 'block' (silent, clipped, misaligned...), with
+   * its reasons. Null when the sidecar predates it. A 'block' capture is not ticked for training
+   * by default, matching IR Lab's own "Train N untrained" count. */
+  readiness: { level: string; reasons: string[] } | null
 }
 
 export interface NamProjectSummary {
