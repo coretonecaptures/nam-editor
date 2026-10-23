@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   buildNamCaptureImportPayloads,
   findModelNameConflicts,
+  portableCaptureFolder,
   readSidecarNamLabDetails,
   type NamCaptureImportItem,
   type NamCaptureImportConfig,
@@ -340,5 +341,13 @@ describe('per-capture details from the IR Lab sidecar', () => {
     const it1: NamCaptureImportItem = { ...item('rides'), ...pair }
     const { payloads } = await buildNamCaptureImportPayloads([it1], baseConfig, defaults, stdProfile)
     expect(payloads[0].namSuggestedNamLab).toEqual({ amp_channel: 'Clean', cabinet: '4x12 V30' })
+  })
+})
+
+describe('portableCaptureFolder (no home path in a shared .nam, 2026-10-23)', () => {
+  it('keeps only the project and capture folder names', () => {
+    expect(portableCaptureFolder('/Users/someone/IR Lab/Projects/NAM/Two Rock/NAM Captures')).toBe('Two Rock/NAM Captures')
+    expect(portableCaptureFolder('C:\\Users\\someone\\Projects\\Amp\\NAM Captures')).toBe('Amp/NAM Captures')
+    expect(portableCaptureFolder(null)).toBeNull()
   })
 })

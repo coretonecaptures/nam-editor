@@ -305,3 +305,12 @@ export function findModelNameConflicts(
   })
   return out
 }
+
+/** `<project folder>/<capture folder>` from an absolute capture folder path, for the .nam's
+ * metadata.nam_lab.source_capture_folder: enough to recognise the source, without the user's home
+ * path in a model that gets shared. Either separator; null in, null out. */
+export function portableCaptureFolder(folder: string | null | undefined): string | null {
+  if (!folder) return null
+  const parts = folder.split(/[\\/]+/).filter(Boolean)
+  return parts.length ? parts.slice(-2).join('/') : null
+}

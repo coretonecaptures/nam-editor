@@ -9,7 +9,7 @@ import { registerIrLibraryIpc } from './irLibraryIpc'
 import { deleteWithFallback } from './trashFile'
 import { stopAllRootWatchers } from './irCatalog/irRootWatcher'
 import { writeNamLabResult } from './irCatalog/namCaptureResult'
-import { buildNamCaptureImportPayloads, findModelNameConflicts, sanitizeTrainerPathPart, type NamCaptureImportItem, type CaptureProfileConfig } from './namCaptureTraining'
+import { buildNamCaptureImportPayloads, findModelNameConflicts, sanitizeTrainerPathPart, type NamCaptureImportItem, type CaptureProfileConfig, portableCaptureFolder } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
 import { parseNamLabUrl } from './namLabUrl'
 import { parseHandoffOp, writeHandoffReceipt } from './handoffReceipt'
@@ -6167,7 +6167,10 @@ function persistTrainerMetadata(
     patched = patchNamLabField(patched, 'source_capture_id', options.namCaptureSource.capture_id)
     patched = patchNamLabField(patched, 'source_capture_name', options.namCaptureSource.capture_name)
     patched = patchNamLabField(patched, 'source_project_name', options.namCaptureSource.project_name)
-    patched = patchNamLabField(patched, 'source_capture_folder', options.namCaptureSource.capture_folder)
+    // Only the project folder + capture folder names, never the absolute path: a .nam is shared and
+    // published, and the full path carried the user's home folder (/Users/<name>/...). Nothing
+    // reads this key back; capture id / name / project identify the source.
+    patched = patchNamLabField(patched, 'source_capture_folder', portableCaptureFolder(options.namCaptureSource.capture_folder))
   }
   if (options.namCaptureSuggested) {
     const s = options.namCaptureSuggested
