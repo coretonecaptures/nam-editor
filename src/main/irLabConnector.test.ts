@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { buildIrLabUrl, irLabConnectorAvailable, irLabSendBlocker } from './irLabConnector'
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { buildIrLabUrl, irLabConnectorAvailable, irLabSendBlocker, waitForIrLabReceipt } from './irLabConnector'
+import { parseIrLabStatus } from './irLabStatus'
 
 describe('buildIrLabUrl', () => {
   it('builds a session URL', () => {
@@ -100,7 +104,7 @@ describe('irLabConnectorAvailable', () => {
 
 describe('irLabSendBlocker (2026-10-23: never report "sent" for a link IR Lab will ignore)', () => {
   const status = (over: Partial<Parameters<typeof irLabSendBlocker>[0]> = {}) => ({
-    installed: true, version: '1.0.0', licenseState: 'licensed' as const, trialDaysRemaining: null, routes: ['blend', 'nam', 'playcab'] as string[] | null, ...over
+    installed: true, version: '1.0.0', licenseState: 'licensed' as const, trialDaysRemaining: null, routes: ['blend', 'nam', 'playcab'] as string[] | null, linkReceipts: true, ...over
   })
   it('sends to a licensed IR Lab that knows the route', () => {
     expect(irLabSendBlocker(status(), 'nam')).toBeNull()
@@ -112,5 +116,26 @@ describe('irLabSendBlocker (2026-10-23: never report "sent" for a link IR Lab wi
   })
   it('an older IR Lab that lists no routes still gets the routes it always had', () => {
     expect(irLabSendBlocker(status({ routes: null }), 'blend')).toBeNull()
+  })
+})
+
+describe('IR Lab link receipts (2026-10-23)', () => {
+  it('adds the op id to the link', () => {
+    expect(buildIrLabUrl('scheme://', { kind: 'nam', file: '/m/a b.nam' }, 'op-12345678')).toBe('scheme://nam?file=%2Fm%2Fa+b.nam&op=op-12345678')
+  })
+  it('reads and removes the receipt, or gives up after the timeout', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'irlab-receipts-'))
+    try {
+      writeFileSync(join(dir, 'op-1.json'), JSON.stringify({ op: 'op-1', route: 'playcab', ok: false, message: 'Stereo rig not enabled' }))
+      expect(await waitForIrLabReceipt(dir, 'op-1', 1000, 10)).toEqual({ ok: false, message: 'Stereo rig not enabled' })
+      expect(existsSync(join(dir, 'op-1.json'))).toBe(false)
+      expect(await waitForIrLabReceipt(dir, 'op-2', 50, 10)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+  it('the status file says whether IR Lab writes receipts', () => {
+    expect(parseIrLabStatus(JSON.stringify({ installed: true, linkReceipts: 1 })).linkReceipts).toBe(true)
+    expect(parseIrLabStatus(JSON.stringify({ installed: true })).linkReceipts).toBe(false)
   })
 })

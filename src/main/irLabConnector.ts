@@ -18,7 +18,10 @@
  * strings (e.g. "Cab IR", "Long Reverb IR") — IR Lab does no fuzzy matching on this string.
  */
 import { shell } from 'electron'
-import { readIrLabStatus, type IrLabStatus } from './irLabStatus'
+import { randomUUID } from 'node:crypto'
+import * as fs from 'node:fs'
+import { join } from 'node:path'
+import { readIrLabStatus, irLabAppDataDir, type IrLabStatus } from './irLabStatus'
 
 export type IrLabPayload =
   | { kind: 'session'; captureId: string }
@@ -46,6 +49,9 @@ export type IrLabPayload =
 export interface IrLabSendResult {
   success: boolean
   reason?: string
+  /** True when IR Lab's receipt confirmed it handled the link; false when it was sent but IR Lab
+   * did not answer in time (an older IR Lab, or one slow to start). */
+  confirmed?: boolean
 }
 
 // Replaced at build time by electron.vite.config.ts (main `define`). Absent under vitest, hence
@@ -63,7 +69,7 @@ export function irLabConnectorAvailable(): boolean {
 
 /** Pure (no Electron dependency) so it's actually unit-testable — see irLabConnector.test.ts.
  * `sendToIrLab` below is the only caller that also fires the real OS-level open call. */
-export function buildIrLabUrl(scheme: string, payload: IrLabPayload): string {
+export function buildIrLabUrl(scheme: string, payload: IrLabPayload, op?: string): string {
   const params = new URLSearchParams()
   let path: string
   switch (payload.kind) {
@@ -95,8 +101,38 @@ export function buildIrLabUrl(scheme: string, payload: IrLabPayload): string {
       if (payload.slot != null) params.set('slot', String(payload.slot))
       break
   }
+  if (op) params.set('op', op)
   return `${scheme}${path}?${params.toString()}`
 }
+
+/**
+ * IR Lab's answer to one link: `<IR Lab data folder>/irlab-receipts/<op>.json` =
+ * { op, route, ok, message, handledAt }, written once IR Lab has acted on (or refused) the link.
+ * Polls until it appears or `timeoutMs` passes; reads and deletes it. Null on timeout.
+ */
+export async function waitForIrLabReceipt(
+  folder: string,
+  op: string,
+  timeoutMs: number,
+  pollMs = 250
+): Promise<{ ok: boolean; message: string } | null> {
+  const file = join(folder, `${op}.json`)
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { ok?: unknown; message?: unknown }
+      fs.rmSync(file, { force: true })
+      return { ok: parsed.ok === true, message: typeof parsed.message === 'string' ? parsed.message : '' }
+    } catch {
+      // not there yet (or caught mid-rename): keep waiting
+    }
+    if (Date.now() >= deadline) return null
+    await new Promise((r) => setTimeout(r, pollMs))
+  }
+}
+
+/** A cold IR Lab start can take several seconds before it handles the link. */
+const IR_LAB_RECEIPT_TIMEOUT_MS = 20000
 
 /**
  * Why IR Lab would not act on this link, from the status file it writes on every launch, or null
@@ -122,13 +158,20 @@ export async function sendToIrLab(payload: IrLabPayload): Promise<IrLabSendResul
   if (!scheme) {
     return { success: false, reason: 'IR Lab connector is not configured in this build.' }
   }
-  const blocker = irLabSendBlocker(readIrLabStatus(), payload.kind)
+  const status = readIrLabStatus()
+  const blocker = irLabSendBlocker(status, payload.kind)
   if (blocker) return { success: false, reason: blocker }
+  // With receipts, report what IR Lab actually did -- loaded, or refused with the reason it showed
+  // -- instead of assuming the open call meant success.
+  const op = status.linkReceipts ? randomUUID() : undefined
 
-  const url = buildIrLabUrl(scheme, payload)
+  const url = buildIrLabUrl(scheme, payload, op)
   try {
     await shell.openExternal(url)
-    return { success: true }
+    if (!op) return { success: true, confirmed: false }
+    const receipt = await waitForIrLabReceipt(join(irLabAppDataDir(), 'irlab-receipts'), op, IR_LAB_RECEIPT_TIMEOUT_MS)
+    if (!receipt) return { success: true, confirmed: false }
+    return receipt.ok ? { success: true, confirmed: true } : { success: false, confirmed: true, reason: receipt.message || 'IR Lab refused the link.' }
   } catch (err) {
     return { success: false, reason: err instanceof Error ? err.message : String(err) }
   }

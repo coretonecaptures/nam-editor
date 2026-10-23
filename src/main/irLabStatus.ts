@@ -32,6 +32,9 @@ export interface IrLabStatus {
   /** The irlab:// routes this IR Lab build receives (IR Lab 2026-10-01+). null = an older IR Lab
    * that predates the list -- which also predates `playcab`, so treat null as "not supported". */
   routes: string[] | null
+  /** IR Lab answers an irlab:// link that carries op=<id> with a receipt file (see
+   * irLabConnector.ts). False for an IR Lab that predates them: don't wait for one. */
+  linkReceipts: boolean
 }
 
 /** True when IR Lab's last status file says it receives this irlab:// route. */
@@ -39,7 +42,7 @@ export function irLabSupportsRoute(status: IrLabStatus, route: string): boolean 
   return status.routes !== null && status.routes.includes(route)
 }
 
-const UNKNOWN_STATUS: IrLabStatus = { installed: false, version: null, licenseState: 'unknown', trialDaysRemaining: null, routes: null }
+const UNKNOWN_STATUS: IrLabStatus = { installed: false, version: null, licenseState: 'unknown', trialDaysRemaining: null, routes: null, linkReceipts: false }
 
 /** IR Lab's per-user data folder. IR Lab resolves it with JUCE's userApplicationDataDirectory,
  * which is ~/Library on macOS -- NOT Electron's appData (~/Library/Application Support), so
@@ -73,7 +76,8 @@ export function parseIrLabStatus(json: string): IrLabStatus {
     version: typeof obj.version === 'string' ? obj.version : null,
     licenseState,
     trialDaysRemaining: typeof obj.trialDaysRemaining === 'number' ? obj.trialDaysRemaining : null,
-    routes: Array.isArray(obj.routes) ? obj.routes.filter((r): r is string => typeof r === 'string') : null
+    routes: Array.isArray(obj.routes) ? obj.routes.filter((r): r is string => typeof r === 'string') : null,
+    linkReceipts: obj.linkReceipts === 1
   }
 }
 
