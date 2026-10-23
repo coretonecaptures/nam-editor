@@ -46,10 +46,16 @@ export class ScanRenderPool {
     return this.queue.length + this.slots.filter((s) => s.busy).length
   }
 
-  render(request: NamRenderRequest): Promise<NamRenderResponse> {
+  /**
+   * Queue a render. `urgent` jumps the queue: something the user is waiting to hear right now
+   * must not sit behind speculative prefetch work they may never want.
+   */
+  render(request: NamRenderRequest, urgent = false): Promise<NamRenderResponse> {
     if (this.disposed) return Promise.reject(new Error('Scan render pool was disposed'))
     return new Promise<NamRenderResponse>((resolve, reject) => {
-      this.queue.push({ request, resolve, reject })
+      const job = { request, resolve, reject }
+      if (urgent) this.queue.unshift(job)
+      else this.queue.push(job)
       this.pump()
     })
   }

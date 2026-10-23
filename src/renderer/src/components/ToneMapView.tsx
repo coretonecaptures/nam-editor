@@ -28,7 +28,7 @@ import {
   type ToneGridMark
 } from './dashboard/ToneGrid'
 import { paddedDomain } from './dashboard/scales'
-import { captureNeedsCabIr } from '../utils/playerAudio'
+import { GEAR_TYPES_WITH_CAB, captureNeedsCabIr } from '../utils/playerAudio'
 import { ScanList } from './ScanList'
 import { useAudition } from '../hooks/useAudition'
 import {
@@ -53,7 +53,17 @@ const TONE_COLORS: Record<string, string> = {
 }
 const UNTYPED_COLOR = '#64748b'
 
+/**
+ * Facet key for captures with no tone_type.
+ *
+ * Its own value rather than folded into "other": that made the Other count include every
+ * untyped capture, selecting Other pulled them in, and the legend's Other swatch didn't match
+ * the grey those dots were actually drawn in.
+ */
+const UNTYPED_TONE = 'untyped'
+
 const TONE_LABELS: Record<string, string> = {
+  [UNTYPED_TONE]: 'No tone type',
   clean: 'Clean',
   crunch: 'Crunch',
   overdrive: 'Overdrive',
@@ -64,7 +74,7 @@ const TONE_LABELS: Record<string, string> = {
 }
 
 /** Tone types ordered by drive, matching the saturation reading of the X axis. */
-const TONE_ORDER = ['clean', 'crunch', 'overdrive', 'distortion', 'hi_gain', 'fuzz', 'other']
+const TONE_ORDER = ['clean', 'crunch', 'overdrive', 'distortion', 'hi_gain', 'fuzz', 'other', UNTYPED_TONE]
 
 /** Room left below the plot for the zoom scrollbar, the hint line and the page's own padding. */
 const PLOT_BOTTOM_GUTTER = 104
@@ -325,6 +335,7 @@ export function ToneMapView({
   const [irPath, setIrPath] = useState<string | null>(null)
   const [diCategories, setDiCategories] = useState<DiCategoryLike[]>([])
   const audition = useAudition(diPath, { irPath, irMix })
+  const stopAudition = audition.stop
 
   const plotRef = useRef<HTMLDivElement | null>(null)
   const [plotWidth, setPlotWidth] = useState(900)
@@ -400,11 +411,11 @@ export function ToneMapView({
       if (event.key !== 'Escape') return
       clearHoverTimer()
       hoverTargetPathRef.current = null
-      audition.stop()
+      stopAudition()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [audition, clearHoverTimer])
+  }, [stopAudition, clearHoverTimer])
   const baseFiles = scope === 'library' || !canScopeToFolder ? files : scopedFiles
 
   /** Captures that report a measured gain — the only ones the map can position. */
@@ -437,12 +448,12 @@ export function ToneMapView({
       if (!showUntaggedTone && !f.metadata.tone_type) return false
 
       if (toneKeys.size > 0) {
-        const tone = f.metadata.tone_type ?? 'other'
-        if (!toneKeys.has(tone)) return false
+        if (!toneKeys.has(f.metadata.tone_type || UNTYPED_TONE)) return false
       }
 
+      // `||`, not `??`: an empty-string tag is untagged too, not a facet value of its own.
       if (gearKeys.size > 0) {
-        if (!gearKeys.has(f.metadata.gear_type ?? GEAR_UNTAGGED)) return false
+        if (!gearKeys.has(f.metadata.gear_type || GEAR_UNTAGGED)) return false
       }
 
       return true
@@ -500,6 +511,15 @@ export function ToneMapView({
     () => paddedDomain(positionable.map((f) => f.metadata.gain as number)),
     [positionable]
   )
+
+  // A window into the OLD extent is meaningless once the extent changes (scope toggle, library
+  // rescan) — it could point at a range with nothing in it, with no visible reason why.
+  // Keyed on the numbers, not the array: `files` can be a new array with the same contents
+  // (any library refresh), and that must not throw away the user's zoom.
+  const [domainLo, domainHi] = fullDomain
+  useEffect(() => {
+    setZoom(null)
+  }, [domainLo, domainHi])
 
   const xDomain = useMemo<[number, number]>(() => zoom ?? fullDomain, [zoom, fullDomain])
 
@@ -616,7 +636,7 @@ export function ToneMapView({
   const toneOptions = useMemo(() => {
     const counts = new Map<string, number>()
     for (const f of positionable) {
-      const tone = f.metadata.tone_type ?? 'other'
+      const tone = f.metadata.tone_type || UNTYPED_TONE
       counts.set(tone, (counts.get(tone) ?? 0) + 1)
     }
     return TONE_ORDER.filter((t) => counts.has(t)).map((t) => ({
@@ -635,7 +655,7 @@ export function ToneMapView({
   const gearOptions = useMemo(() => {
     const counts = new Map<string, number>()
     for (const f of positionable) {
-      const key = f.metadata.gear_type ?? GEAR_UNTAGGED
+      const key = f.metadata.gear_type || GEAR_UNTAGGED
       counts.set(key, (counts.get(key) ?? 0) + 1)
     }
     const known = GEAR_ORDER.filter((g) => counts.has(g)).map((g) => ({
@@ -662,19 +682,23 @@ export function ToneMapView({
    * costs a line and removes the confusion.
    */
   const cabSplit = useMemo(() => {
+    // Three buckets, not two: an untagged gear type gets no IR (captureNeedsCabIr can't classify
+    // it), but that doesn't mean it HAS a cab — reporting it as "already have one" was false.
     let needs = 0
+    let has = 0
     const needsKeys = new Set<string>()
     const hasKeys = new Set<string>()
     for (const f of filtered) {
-      const key = f.metadata.gear_type ?? GEAR_UNTAGGED
+      const key = f.metadata.gear_type || GEAR_UNTAGGED
       if (captureNeedsCabIr(f.metadata.gear_type)) {
         needs++
         needsKeys.add(key)
-      } else {
+      } else if (f.metadata.gear_type && GEAR_TYPES_WITH_CAB.has(f.metadata.gear_type)) {
+        has++
         hasKeys.add(key)
       }
     }
-    return { needs, has: filtered.length - needs, total: filtered.length, needsKeys, hasKeys }
+    return { needs, has, unknown: filtered.length - needs - has, total: filtered.length, needsKeys, hasKeys }
   }, [filtered])
 
   const toggleIn = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (key: string) =>
@@ -768,9 +792,11 @@ export function ToneMapView({
       if (cell.ids.length === 1) {
         const only = byPath.get(cell.ids[0])
         if (only) {
-          // Same route as clicking a dot, so the looping audition is stopped here too.
-          if (dotAction === 'click') audition.play(only)
-          else openInPlayer(only)
+          // Same route as clicking a dot — including click-again-to-stop.
+          if (dotAction === 'click') {
+            if (audition.playingPath === only.filePath) audition.stop()
+            else audition.play(only)
+          } else openInPlayer(only)
           return
         }
       }
@@ -804,6 +830,7 @@ export function ToneMapView({
     let cancelled = false
     if (!diLibraryPath) {
       setDiPath(null)
+      setDiCategories([])
       return
     }
     void (async () => {
@@ -848,7 +875,7 @@ export function ToneMapView({
   )
 
   const handleWheel = useCallback(
-    (event: React.WheelEvent<HTMLDivElement>) => {
+    (event: WheelEvent) => {
       // Only take over the wheel when actually zooming, so the page can still scroll otherwise.
       if (event.deltaY === 0) return
       event.preventDefault()
@@ -858,6 +885,14 @@ export function ToneMapView({
     },
     [valueAtClientX, zoomAt]
   )
+
+  // Native, non-passive listener: React registers wheel handlers as passive, so preventDefault()
+  // inside an onWheel prop is ignored and the surrounding panel scrolled on every zoom step.
+  useEffect(() => {
+    if (!plotEl) return
+    plotEl.addEventListener('wheel', handleWheel, { passive: false })
+    return () => plotEl.removeEventListener('wheel', handleWheel)
+  }, [plotEl, handleWheel])
 
   const dragRef = useRef<{ clientX: number; moved: boolean } | null>(null)
   const suppressPlotClickRef = useRef(false)
@@ -1384,14 +1419,18 @@ export function ToneMapView({
                   }`}
                 >
                   {irPath && cabSplit.needs === 0
-                    ? 'every capture in scope already has a cab — this IR is not applied to any of them'
-                    : irPath && cabSplit.has > 0
-                      ? `cab applied to ${cabSplit.needs.toLocaleString()} of ${cabSplit.total.toLocaleString()} · the other ${cabSplit.has.toLocaleString()} already have one. Filter by Gear type to compare like with like.`
+                    ? cabSplit.unknown > 0
+                      ? 'this IR is not applied to any capture in scope — none are tagged as needing a cab'
+                      : 'every capture in scope already has a cab — this IR is not applied to any of them'
+                    : irPath && cabSplit.needs < cabSplit.total
+                      ? `cab applied to ${cabSplit.needs.toLocaleString()} of ${cabSplit.total.toLocaleString()} · the other ${(cabSplit.total - cabSplit.needs).toLocaleString()} ${cabSplit.unknown > 0 ? 'have a cab or no gear type' : 'already have one'}. Filter by Gear type to compare like with like.`
                       : irPath
                         ? `cab applied to all ${cabSplit.total.toLocaleString()} in scope`
                         : cabSplit.needs > 0
                           ? `${cabSplit.needs.toLocaleString()} in scope have no cab — pick an IR or they will sound harsh`
-                          : 'no cab needed — every capture in scope has one'}
+                          : cabSplit.unknown > 0
+                            ? `${cabSplit.unknown.toLocaleString()} in scope have no gear type, so no cab is applied to them`
+                            : 'no cab needed — every capture in scope has one'}
                 </span>
               )}
               <span className="text-xs text-gray-400 dark:text-gray-500">
@@ -1423,7 +1462,6 @@ export function ToneMapView({
           ) : (
             <div
               ref={attachPlot}
-              onWheel={handleWheel}
               onMouseDown={handlePanStart}
               onMouseMove={handlePanMove}
               onMouseUp={handlePanEnd}
@@ -1519,14 +1557,19 @@ export function ToneMapView({
                   window.addEventListener('mouseup', onUp)
                 }}
               >
-                <div
-                  className="absolute top-0 bottom-0 rounded-full bg-teal-500/70"
-                  style={{
-                    left: `${((xDomain[0] - fullDomain[0]) / (fullDomain[1] - fullDomain[0])) * 100}%`,
-                    // Floor the width so a deep zoom still leaves something grabbable.
-                    width: `${Math.max(4, ((xDomain[1] - xDomain[0]) / (fullDomain[1] - fullDomain[0])) * 100)}%`
-                  }}
-                />
+                {(() => {
+                  const full = fullDomain[1] - fullDomain[0]
+                  // Floor the width so a deep zoom still leaves something grabbable — and pull
+                  // `left` back by the same amount, or the floored thumb ran off the track's end.
+                  const width = Math.max(4, ((xDomain[1] - xDomain[0]) / full) * 100)
+                  const left = Math.min(((xDomain[0] - fullDomain[0]) / full) * 100, 100 - width)
+                  return (
+                    <div
+                      className="absolute top-0 bottom-0 rounded-full bg-teal-500/70"
+                      style={{ left: `${Math.max(0, left)}%`, width: `${width}%` }}
+                    />
+                  )
+                })()}
               </div>
 
               <span className="font-mono tabular-nums text-xs text-gray-400 dark:text-gray-500 w-12 text-right flex-shrink-0">

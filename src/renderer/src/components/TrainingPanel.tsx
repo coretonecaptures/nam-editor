@@ -1592,7 +1592,28 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
 
   // Re-queue a set of history entries under a single new submission. Used by the per-entry retry
   // for profile-less manual batches AND by the History group-head "Retry failed / Retry batch" actions.
-  const handleRetryHistoryBatch = async (entries: TrainerHistoryEntry[], submissionLabel: string) => {
+  const handleRetryHistoryBatch = async (allEntries: TrainerHistoryEntry[], submissionLabel: string) => {
+    if (allEntries.length === 0) return
+    // IR Lab captures are rebuilt in the main process from their stored recipe (own DI, never
+    // normalised, provenance + write-back kept). Rebuilding them here used the global DI and the
+    // current normalisation preference, which can train the wrong excitation/recording mapping.
+    const namCaptureEntries = allEntries.filter((e) => e.sourceMode === 'nam-capture-import')
+    const entries = allEntries.filter((e) => e.sourceMode !== 'nam-capture-import')
+    if (namCaptureEntries.length > 0) {
+      const namResult = await window.api.retryNamCaptureHistory(
+        namCaptureEntries.map((e) => e.historyId),
+        submissionLabel
+      )
+      if (!namResult.success || namResult.error) {
+        setQueueActionError(namResult.error ?? 'Could not re-queue those IR Lab captures.')
+      } else {
+        setQueueActionError('')
+      }
+      if (entries.length === 0) {
+        if (namResult.success) setHistoryContextMenu(null)
+        return
+      }
+    }
     if (entries.length === 0) return
     const py = settings.namPythonPath.trim()
     if (!py) {
@@ -1675,6 +1696,12 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
     const result = await window.api.enqueueTrainerRuns(payloads, { staged: false })
     if (!result.success) {
       setQueueActionError(result.error ?? 'Could not re-queue that batch.')
+      return
+    }
+    // success with queued=0 means duplicate protection dropped everything: nothing was retried,
+    // so marking these retried and clearing their queue rows would erase outstanding failures.
+    if (!result.queued) {
+      setQueueActionError('Nothing was re-queued — those captures are already in the queue.')
       return
     }
     setQueueActionError('')
@@ -5123,10 +5150,24 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 }}
               />
             </div>
+            {(() => {
+              // A2 trains from NAM's own packed config; LR / LR decay are never applied to it
+              // (see _run_a2), so an all-A2 batch gets an explanation instead of dead controls.
+              const editable = trainerState.queue.filter((j) =>
+                j.submissionId === editBatchModal.submissionId && (j.status === 'queued' || j.status === 'staged'))
+              const a2Count = editable.filter((j) => j.namMode === 'a2').length
+              if (editable.length > 0 && a2Count === editable.length) {
+                return (
+                  <p className="text-[11px] text-nm-text-3">
+                    LR and LR decay don't apply to A2 — it trains from NAM's own packed model config.
+                  </p>
+                )
+              }
+              return (
             <details className="group">
               <summary className="text-[11px] font-[600] text-nm-text-3 cursor-pointer select-none list-none flex items-center gap-1">
                 <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
-                Advanced (LR / LR decay)
+                Advanced (LR / LR decay){a2Count > 0 ? ' — A1 captures only' : ''}
               </summary>
               <div className="mt-3 space-y-3">
                 <div>
@@ -5153,6 +5194,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
               </div>
             </details>
+              )
+            })()}
           </div>
           <div className="px-5 pb-4 flex justify-end gap-2">
             <button

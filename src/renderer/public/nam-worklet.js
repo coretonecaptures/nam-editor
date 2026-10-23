@@ -39,6 +39,7 @@ class NamProcessor extends AudioWorkletProcessor {
     this.failed = null
     this.modelHandle = 0
     this.bypass = false
+    this.reportedNonFinite = false
     this.inputGain = 1
     this.outputGain = 1
 
@@ -213,7 +214,16 @@ class NamProcessor extends AudioWorkletProcessor {
    * sending side anyway so no string work happens in the audio scope at all.
    */
   _loadModel(modelBytes, slimmableSize) {
-    if (!this.ready) return
+    if (!this.ready) {
+      // Answer anyway: the engine waits for a load result, and silence here meant a 20s stall
+      // before it could report that the WASM never initialised.
+      this.port.postMessage({
+        type: 'error',
+        stage: 'loadModel',
+        error: this.failed || 'NAM module is not initialised'
+      })
+      return
+    }
     try {
       this._freeModel()
 
@@ -272,7 +282,11 @@ class NamProcessor extends AudioWorkletProcessor {
 
     // Nothing to run: emit silence rather than leaving the buffer stale.
     if (!input || !this.ready || !this.modelHandle || this.bypass) {
-      if (input && (this.bypass || !this.modelHandle)) {
+      // Dry signal only on an EXPLICIT bypass. "No model" also covers a model that failed to load
+      // or a worklet whose WASM never initialised; passing input through there meant a session
+      // that reported running while you heard your raw guitar — or an amp fed the un-pedalled
+      // signal instead of the pedal stage it was asked for.
+      if (input && this.bypass) {
         for (let i = 0; i < output.length; i++) output[i] = input[i] * this.inputGain
       } else {
         output.fill(0)
@@ -293,8 +307,27 @@ class NamProcessor extends AudioWorkletProcessor {
       return true
     }
 
+    // Non-finite samples are zeroed here, before they reach any stateful node downstream: one NaN
+    // in a convolver or delay line poisons it for the rest of the session, not just one block.
     const gain = this.outputGain
-    for (let i = 0; i < n; i++) output[i] = this.heapF32[outBase + i] * gain
+    let bad = false
+    for (let i = 0; i < n; i++) {
+      const v = this.heapF32[outBase + i] * gain
+      if (v === v && v !== Infinity && v !== -Infinity) {
+        output[i] = v
+      } else {
+        output[i] = 0
+        bad = true
+      }
+    }
+    if (bad && !this.reportedNonFinite) {
+      this.reportedNonFinite = true
+      this.port.postMessage({
+        type: 'error',
+        stage: 'process',
+        error: 'Model produced non-finite output; muted those samples'
+      })
+    }
 
     return true
   }

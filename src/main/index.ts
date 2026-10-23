@@ -15,6 +15,7 @@ import { parseNamLabUrl } from './namLabUrl'
 import { parseHandoffOp, writeHandoffReceipt } from './handoffReceipt'
 import { irLabAppDataDir } from './irLabStatus'
 import type { NamLabTrainIntent } from '../shared/namProjects'
+import type { NamCaptureRetryRecipe } from '../shared/trainer'
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
 
@@ -993,6 +994,10 @@ async function handleCompanionAction(action: string, body: unknown): Promise<{ o
     const historyId = typeof (body as { historyId?: unknown })?.historyId === 'string' ? (body as { historyId: string }).historyId : ''
     const entry = trainerHistory.find((item) => item.historyId === historyId)
     if (!entry) return { ok: false, error: 'Training history entry not found.' }
+    if (entry.sourceMode === 'nam-capture-import') {
+      const result = await retryNamCaptureHistory([entry], `Retry - ${entry.finalModelName || 'capture'}`)
+      return result.success ? { ok: true, data: { queued: result.queued } } : { ok: false, error: result.error ?? 'That retry did not add a new queue item.' }
+    }
     if (!entry.profileId) return { ok: false, error: 'Only profile-backed runs can be retried from mobile right now.' }
     const profile = trainingProfiles.find((item) => item.id === entry.profileId)
     if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
@@ -1014,7 +1019,9 @@ async function handleCompanionAction(action: string, body: unknown): Promise<{ o
         trainerConfiguredInputPath,
         [sourcePath],
         entry.sourceMode,
-        submissionMeta
+        submissionMeta,
+        undefined,
+        { explicitRetry: true }
       )).filter((payload) => payload.architecture === entry.architecture)
       : [buildTrainerPayloadFromHistoryEntryFallback(entry, trainerConfiguredPythonPath, trainerConfiguredInputPath, sourcePath, submissionMeta)]
     if (payloads.length === 0) return { ok: false, error: 'That history entry could not be re-queued.' }
@@ -1235,7 +1242,8 @@ function startCompanionBridgeServer(): void {
 }
 
 type TrainerArchitecture = string
-type TrainerQueueJobStatus = 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
+// 'staged' matches src/shared/trainer.ts — this local copy was missing it, though staged jobs are used throughout.
+type TrainerQueueJobStatus = 'staged' | 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
 
 interface WaveNetLayerConfig {
   input_size: number
@@ -1426,6 +1434,33 @@ interface TrainerHistoryEntry {
   trainedDespiteWarnings?: boolean
   checkWarnings?: string
   workspacePath?: string
+  /** IR Lab captures only — see NamCaptureRetryRecipe. */
+  namCaptureRecipe?: NamCaptureRetryRecipe
+  retriedAt?: string | null
+}
+
+/** The recipe an IR Lab job was built from, for its history row; undefined for any other job. */
+function namCaptureRecipeOf(job: TrainerQueueJob): NamCaptureRetryRecipe | undefined {
+  if (job.sourceMode !== 'nam-capture-import') return undefined
+  return {
+    excitationPath: job.inputPath,
+    finalModelRoot: job.finalModelRoot,
+    captureId: job.namCaptureId ?? null,
+    captureName: job.namCaptureName ?? null,
+    projectName: job.namProjectName ?? null,
+    captureFolderPath: job.namCaptureFolderPath ?? null,
+    inputLevelDbu: job.inputLevelDbu,
+    outputLevelDbu: job.outputLevelDbu,
+    modeledBy: job.namSuggestedModeledBy ?? job.modeledBy ?? null,
+    gearMake: job.namSuggestedGearMake ?? null,
+    gearModel: job.namSuggestedGearModel ?? null,
+    gearType: job.namSuggestedGearType ?? null,
+    toneType: job.namSuggestedToneType ?? null,
+    presetId: job.profileId,
+    presetName: job.profileName,
+    ignoreChecks: job.ignoreChecks,
+    savePlot: job.savePlot,
+  }
 }
 
 interface TrainerFailureLogEntry {
@@ -1702,8 +1737,16 @@ faulthandler.enable(file=sys.stderr, all_threads=True)
 import matplotlib
 matplotlib.use("Agg")
 
+import time
+
 import numpy as np
 import soundfile as sf
+
+# When this attempt started. A retry reuses the same workspace, so files from an earlier attempt
+# are still there; only .nam files written since now can be this run's result.
+_RUN_STARTED_AT = time.time()
+# Filesystem mtime granularity (FAT/SMB can be 2s), so a file written right at start still counts.
+_MTIME_SLACK_S = 2.0
 
 from nam.train.core import train
 
@@ -1824,26 +1867,35 @@ def _extract_validation_esr(result):
         return None
 
 
+def _is_fresh(path):
+    try:
+        return path.stat().st_mtime >= _RUN_STARTED_AT - _MTIME_SLACK_S
+    except OSError:
+        return False
+
+
 def _find_output_model_path(train_path, model_name):
+    """The .nam THIS attempt produced. Anything older is a previous attempt's leftover in a
+    reused retry workspace — accepting it used to promote the old model as the new result."""
     root = Path(train_path)
 
     direct = root / f"{model_name}.nam"
-    if direct.exists():
+    if direct.exists() and _is_fresh(direct):
         return str(direct)
 
     # Scan workspace recursively for any .nam file NAM may have put in a subdirectory.
     candidates = []
     if root.exists():
-        candidates = list(root.rglob("*.nam"))
+        candidates = [p for p in root.rglob("*.nam") if _is_fresh(p)]
 
     # Also check CWD — some NAM versions write to the current working directory.
     if not candidates:
         cwd = Path.cwd()
         if cwd.resolve() != root.resolve():
             cwd_direct = cwd / f"{model_name}.nam"
-            if cwd_direct.exists():
+            if cwd_direct.exists() and _is_fresh(cwd_direct):
                 return str(cwd_direct)
-            candidates = list(cwd.glob("*.nam"))
+            candidates = [p for p in cwd.glob("*.nam") if _is_fresh(p)]
 
     if not candidates:
         return str(direct)  # Caller (_promote_output_model_path) will raise if this doesn't exist.
@@ -1864,6 +1916,14 @@ def _promote_output_model_path(train_path, model_name, discovered_path, backup_e
             f"  Searched: {train_path}\n"
             f"  Expected: {discovered_path}\n"
             f"  Check that NAM training completed and that the train_path is writable."
+        )
+    # The finder falls back to the expected path when nothing fresh exists; in a reused retry
+    # workspace that path can hold an EARLIER attempt's model. Never report that as this result.
+    if not _is_fresh(source):
+        raise FileNotFoundError(
+            f"NAM did not produce a new .nam file for this run.\n"
+            f"  Found only an older model from a previous attempt: {discovered_path}\n"
+            f"  Check the log above for why training did not export a model."
         )
     if source.resolve() == target.resolve():
         return str(target)
@@ -2043,7 +2103,14 @@ def _run_a1_v13(payload):
 def _run_a2(payload):
     """A2 PackedWaveNet training for NAM >= 0.13.0.
     core.train() loads config_model_packed.json internally — no config injection needed.
-    Produces a SlimmableContainer .nam with channels_3 (lite) + channels_8 (standard)."""
+    Produces a SlimmableContainer .nam with channels_3 (lite) + channels_8 (standard).
+
+    Deliberately does NOT apply the payload's lr / lrDecay / fitMrstft. Verified against stock
+    neural-amp-modeler 0.13.0: train() has no lr/lr_decay/fit_mrstft parameters at all, and A2's
+    optimizer comes only from config_model_packed.json (lr 0.004, ExponentialLR gamma 0.994,
+    mrstft_weight 0.0005) -- the official GUI can't change them either. Every NAM Lab builder
+    fills lrDecay=0.002 (gamma 0.998), so injecting the payload would quietly make every A2 run
+    decay ~3x slower than the official trainer. The queue editor hides those controls for A2."""
     return train(
         input_path=payload["inputPath"],
         output_path=payload["outputPath"],
@@ -2286,8 +2353,8 @@ function saveTrainerQueue(): void {
     // Mirror the live queue 1:1 — staged, queued, running, AND finished/failed/canceled rows.
     // Finished rows are what the user sees as "what already ran in this session/batch"; dropping
     // them at save time silently wipes that context on every restart, which is the bug.
-    // Cap at TRAINER_QUEUE_PERSIST_CAP (most recent end of the array) so the file can't grow
-    // unbounded — older entries are in trainer-history.json regardless.
+    // Finished rows are capped (see getPersistableTrainerQueueJobs) so the file can't grow
+    // unbounded — older ones are in trainer-history.json regardless. Unfinished rows never are.
     // Persist the pause flag so auto-start-on-launch can respect it.
     const payload = { paused: trainerPauseAfterCurrent, jobs: getPersistableTrainerQueueJobs() }
     fs.writeFileSync(getTrainerQueuePath(), JSON.stringify(payload, null, 2), 'utf-8')
@@ -2339,12 +2406,41 @@ function toSafeTimestampSegment(value: string): string {
   return new Date(ms).toISOString().replace(/[:.]/g, '-')
 }
 
+/** True when `child` resolves to `parent` itself or somewhere beneath it (case-insensitive on Windows). */
+function isPathInside(child: string, parent: string): boolean {
+  if (!child || !parent) return false
+  const fold = (p: string) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p))
+  const rel = relative(fold(parent), fold(child))
+  if (rel === '') return true
+  // Outside: climbs out (".."), or lands on another drive/root, where relative() returns an
+  // absolute path.
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !/^[a-zA-Z]:/.test(rel) && !rel.startsWith(sep)
+}
+
 function isTrainerQueueTerminalStatus(status: TrainerQueueJobStatus): boolean {
   return status === 'success' || status === 'error' || status === 'canceled'
 }
 
+/**
+ * What gets written to disk. The cap applies to TERMINAL rows only.
+ *
+ * A plain slice(-cap) dropped the FRONT of the queue — the oldest pending jobs, and potentially
+ * the active one — once it passed the cap, so a big batch silently lost work on restart, with no
+ * history row to recover it from. Unfinished and staged work is never dropped; only the oldest
+ * finished rows (whose permanent record is in history) make room. Queue order is preserved.
+ */
 function getPersistableTrainerQueueJobs(): TrainerQueueJob[] {
-  return trainerQueue.slice(-TRAINER_QUEUE_PERSIST_CAP)
+  const terminalCount = trainerQueue.reduce((n, job) => n + (isTrainerQueueTerminalStatus(job.status) ? 1 : 0), 0)
+  const unfinishedCount = trainerQueue.length - terminalCount
+  let terminalToDrop = Math.max(0, terminalCount - Math.max(0, TRAINER_QUEUE_PERSIST_CAP - unfinishedCount))
+  if (terminalToDrop === 0) return trainerQueue.slice()
+  return trainerQueue.filter((job) => {
+    if (terminalToDrop > 0 && isTrainerQueueTerminalStatus(job.status)) {
+      terminalToDrop--
+      return false
+    }
+    return true
+  })
 }
 
 // A batch (submission) leaves the active queue once every one of its non-staged jobs is terminal.
@@ -2525,6 +2621,7 @@ function appendTrainerCanceledHistory(
     submissionLabel: job.submissionLabel,
     submissionCreatedAt: job.submissionCreatedAt,
     workspacePath: job.workspacePath,
+    namCaptureRecipe: namCaptureRecipeOf(job),
   })
 }
 
@@ -3677,8 +3774,23 @@ function trainerHistoryAlreadyHasSource(profileId: string | null, sourcePath: st
     normalizePath(entry.sourcePath) === normalized &&
     entry.profileId === profileId &&
     entry.architecture === architecture &&
-    entry.sourceMtimeMs === mtimeMs &&
-    entry.sourceSizeBytes === sizeBytes
+    (
+      (entry.sourceMtimeMs === mtimeMs && entry.sourceSizeBytes === sizeBytes) ||
+      // Older manual skips were stored with no fingerprint, so they never matched a real file
+      // and the watcher queued it anyway. Treat a fingerprint-less skip as path-scoped.
+      (entry.sourceMtimeMs == null && entry.sourceSizeBytes == null)
+    )
+  )
+}
+
+/** Any job for this source that is still going to run — what an explicit retry must not duplicate. */
+function trainerQueueHasActiveSource(profileId: string | null, sourcePath: string, architecture: TrainerArchitecture): boolean {
+  const normalized = normalizePath(sourcePath)
+  return trainerQueue.some((job) =>
+    normalizePath(job.outputPath) === normalized &&
+    job.architecture === architecture &&
+    job.profileId === profileId &&
+    !isTrainerQueueTerminalStatus(job.status)
   )
 }
 
@@ -3699,7 +3811,13 @@ async function buildTrainerPayloadsForProfile(
   sourceWavPaths: string[],
   sourceModeOverride?: TrainingSourceMode,
   submissionMeta?: { id: string; label: string; createdAt: string },
-  normalizeOverride?: { normalizeWav: boolean; normalizeWavTargetDb: number }
+  normalizeOverride?: { normalizeWav: boolean; normalizeWavTargetDb: number },
+  /**
+   * An explicit, user-requested retry of these exact files. The watcher's dedup (a successful
+   * history row, or any retained queue row including failures) is what blocked it: a retry of
+   * something that already ran is the point. Only work still pending is treated as a duplicate.
+   */
+  options?: { explicitRetry?: boolean }
 ): Promise<TrainerStartPayload[]> {
   const payloads: TrainerStartPayload[] = []
   if (!pythonPath.trim()) { log(`[payload builder "${profile.name}"] skipped: python path empty`); return payloads }
@@ -3717,8 +3835,12 @@ async function buildTrainerPayloadsForProfile(
       continue
     }
     for (const architecture of profile.architectures) {
-      if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] already in queue: "${outputPath}" / ${architecture}`); continue }
-      if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) { log(`[payload builder "${profile.name}"] already in history/skipped: "${outputPath}" / ${architecture}`); continue }
+      if (options?.explicitRetry) {
+        if (trainerQueueHasActiveSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] retry skipped, still pending: "${outputPath}" / ${architecture}`); continue }
+      } else {
+        if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] already in queue: "${outputPath}" / ${architecture}`); continue }
+        if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) { log(`[payload builder "${profile.name}"] already in history/skipped: "${outputPath}" / ${architecture}`); continue }
+      }
       const isA2 = architecture === 'a2'
       const profileCfg = isA2 ? null : lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles)
       const graphFormula = profile.effectiveGraphFormula?.trim() ?? ''
@@ -3815,6 +3937,131 @@ async function buildTrainerPayloadsForNamCaptureImport(
   )
   for (const s of skipped) log(`[nam-capture-import] skipped "${s.captureName}" (${s.reason})`)
   return payloads
+}
+
+/**
+ * Rebuild IR Lab history rows for retry, through the same builder an original submission uses.
+ *
+ * So a retry trains the capture's own excitation/recording pair, never normalised, with its
+ * provenance and write-back intact. Rows that predate the stored recipe, or whose pair is gone
+ * from disk, are refused with a reason rather than silently rebuilt against the global DI.
+ */
+async function buildNamCaptureRetryPayloads(
+  entries: TrainerHistoryEntry[],
+  submission: { id: string; label: string; createdAt: string }
+): Promise<{ payloads: TrainerStartPayload[]; acceptedIds: string[]; refused: string[] }> {
+  const payloads: TrainerStartPayload[] = []
+  const acceptedIds: string[] = []
+  const refused: string[] = []
+  if (!trainerConfiguredPythonPath) {
+    return { payloads, acceptedIds, refused: entries.map((e) => `${e.finalModelName}: the NAM Python path is not configured`) }
+  }
+  for (const entry of entries) {
+    const recipe = entry.namCaptureRecipe
+    const name = entry.finalModelName || basename(entry.sourcePath)
+    if (!recipe?.excitationPath) {
+      refused.push(`${name}: this run predates stored capture details — retrain it from its IR Lab project instead`)
+      continue
+    }
+    const built = await buildTrainerPayloadsForNamCaptureImport(
+      [{
+        excitationPath: recipe.excitationPath,
+        recordingPath: entry.sourcePath,
+        captureId: recipe.captureId ?? '',
+        captureName: recipe.captureName ?? '',
+        captureFolderPath: recipe.captureFolderPath ?? '',
+        projectName: recipe.projectName ?? '',
+        // It trained before, so whatever it is, it's meant to train; the synthetic filter
+        // belongs to the original selection, not a retry.
+        synthetic: false,
+        inputLevelDbu: recipe.inputLevelDbu,
+        outputLevelDbu: recipe.outputLevelDbu,
+        suggested: {
+          modeledBy: recipe.modeledBy,
+          gearMake: recipe.gearMake,
+          gearModel: recipe.gearModel,
+          gearType: recipe.gearType,
+          toneType: recipe.toneType,
+        },
+      }],
+      {
+        pythonPath: trainerConfiguredPythonPath,
+        finalModelRoot: recipe.finalModelRoot,
+        architecture: entry.architecture,
+        epochs: entry.epochs,
+        thresholdEsr: entry.thresholdEsr,
+        latency: entry.latencyMode === 'manual' ? entry.latencyValue : null,
+        savePlot: recipe.savePlot,
+        ignoreChecks: recipe.ignoreChecks,
+        presetId: recipe.presetId,
+        presetName: recipe.presetName,
+        includeSynthetic: true,
+        submission,
+      }
+    )
+    if (built.length === 0) {
+      refused.push(`${name}: its excitation or recording WAV is no longer on disk`)
+      continue
+    }
+    // Protect a previously successful model of the same name, as every other History retry does.
+    for (const payload of built) payloads.push({ ...payload, backupExisting: true })
+    acceptedIds.push(entry.historyId)
+  }
+  return { payloads, acceptedIds, refused }
+}
+
+/**
+ * Enqueue IR Lab history retries and mark only what was actually accepted.
+ *
+ * Marking retried / clearing superseded rows happens here, per accepted entry, rather than in the
+ * renderer after a blanket "success": duplicate protection can accept zero of them.
+ */
+async function retryNamCaptureHistory(
+  entries: TrainerHistoryEntry[],
+  label: string
+): Promise<{ success: boolean; queued: number; error?: string; acceptedIds: string[] }> {
+  if (entries.length === 0) return { success: false, queued: 0, error: 'No IR Lab history rows to retry.', acceptedIds: [] }
+  const submission = { id: crypto.randomUUID(), label, createdAt: new Date().toISOString() }
+  const { payloads, acceptedIds, refused } = await buildNamCaptureRetryPayloads(entries, submission)
+  const queued = payloads.length > 0 ? await enqueueTrainingPayloads(payloads) : 0
+  // enqueueTrainingPayloads drops duplicates of already-queued work; only rows with a job in the
+  // new submission count as retried.
+  const inNewSubmission = new Set(
+    trainerQueue
+      .filter((job) => job.submissionId === submission.id)
+      .map((job) => `${normalizePath(job.outputPath)} ${job.architecture}`)
+  )
+  const accepted = entries.filter(
+    (e) => acceptedIds.includes(e.historyId) && inNewSubmission.has(`${normalizePath(e.sourcePath)} ${e.architecture}`)
+  )
+  if (accepted.length > 0) {
+    const now = new Date().toISOString()
+    for (const entry of accepted) entry.retriedAt = now
+    saveTrainerHistory()
+    emitTrainerHistory()
+    const supersededKeys = new Set(
+      accepted.map((e) => `${e.submissionId ?? ''} ${normalizePath(e.sourcePath)} ${e.architecture}`)
+    )
+    const activeId = trainerState.activeJobId
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) =>
+      job.jobId === activeId ||
+      !isTrainerQueueTerminalStatus(job.status) ||
+      !supersededKeys.has(`${job.submissionId ?? ''} ${normalizePath(job.outputPath)} ${job.architecture}`)
+    )
+    if (trainerQueue.length !== before) {
+      pruneFinishedBatchesFromQueue()
+      emitTrainerState()
+    }
+  }
+  const problems = [...refused]
+  if (queued === 0 && refused.length === 0) problems.push('Those captures are already queued.')
+  return {
+    success: queued > 0,
+    queued,
+    acceptedIds: accepted.map((e) => e.historyId),
+    error: problems.length > 0 ? problems.join('\n') : undefined,
+  }
 }
 
 function buildTrainerPayloadFromHistoryEntryFallback(
@@ -3942,7 +4189,30 @@ function stopCheckpointPoll(): void {
   }
 }
 
+/**
+ * A stop requested while a job is still in preflight (file checks, workspace and payload setup),
+ * before any child process exists to kill. Emergency Stop and Batch Cancel both used to require a
+ * child, so a stop during slow or network I/O was rejected — and the job went on to train.
+ */
+let trainerPreflightAbort: { jobId: string; mode: 'requeue' | 'cancel' } | null = null
+
+class TrainerPreflightAborted extends Error {
+  constructor(readonly mode: 'requeue' | 'cancel') {
+    super(mode === 'requeue' ? 'Stopped before training started.' : 'Batch canceled.')
+    this.name = 'TrainerPreflightAborted'
+  }
+}
+
 async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
+  if (trainerPreflightAbort?.jobId === job.jobId) trainerPreflightAbort = null
+  let writtenPayloadPath: string | null = null
+  const checkPreflightAbort = async (): Promise<void> => {
+    const abort = trainerPreflightAbort
+    if (!abort || abort.jobId !== job.jobId) return
+    trainerPreflightAbort = null
+    if (writtenPayloadPath) await fs.promises.unlink(writtenPayloadPath).catch(() => undefined)
+    throw new TrainerPreflightAborted(abort.mode)
+  }
   const pythonPath = job.pythonPath
   const inputPath = job.inputPath
   const outputPath = job.outputPath
@@ -4011,8 +4281,11 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   emitTrainerState()
 
   await fs.promises.access(pythonPath)
+  await checkPreflightAbort()
   await fs.promises.access(inputPath)
+  await checkPreflightAbort()
   await fs.promises.access(outputPath)
+  await checkPreflightAbort()
   try {
     const outputStat = await fs.promises.stat(outputPath)
     updateTrainerJob(job.jobId, {
@@ -4023,10 +4296,12 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     /* best effort */
   }
   await fs.promises.mkdir(trainPath, { recursive: true })
+  await checkPreflightAbort()
 
   const runnerPath = await ensureTrainerRunnerScript()
   const payloadDir = join(app.getPath('userData'), 'trainer')
   await fs.promises.mkdir(payloadDir, { recursive: true })
+  await checkPreflightAbort()
   const payloadPath = join(payloadDir, `run-${runId}.json`)
   const runnerPayload = {
     inputPath,
@@ -4061,6 +4336,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     outputLevelDbu: job.outputLevelDbu ?? null,
   }
   await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
+  writtenPayloadPath = payloadPath
+  await checkPreflightAbort()
 
   // Build a clean environment: start from process.env but strip Electron-specific variables
   // that can confuse Python's native extensions (PyTorch, CUDA DLLs) when inherited.
@@ -4081,6 +4358,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   }
 
   const { spawn } = await import('child_process')
+  // Last chance: past this point there is a child to kill, and the normal cancel paths apply.
+  await checkPreflightAbort()
   trainerChild = spawn(pythonPath, ['-u', runnerPath, payloadPath], {
     cwd: trainPath,
     // On Windows, windowsHide:true gives the subprocess null console handles.
@@ -4121,26 +4400,31 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     stderrRemainder = consumeTrainerChunk(stderrRemainder, chunk)
   })
 
-  trainerChild.once('error', async (error) => {
-    stopCheckpointPoll()
-    trainerState = {
-      ...trainerState,
-      status: 'error',
-      finishedAt: new Date().toISOString(),
-      error: String(error),
-    }
-    trainerChild = null
+  // ONE finalizer per attempt. A failed launch emits 'error' and then (usually) 'close'; the
+  // error handler used to null the child and pump the next job itself, after which this run's
+  // late 'close' still ran the full finalizer against the NEXT run's global state — clearing its
+  // child handle, stopping its checkpoint poll and writing its ESR into this job's history.
+  // Now 'error' only records why, and whichever of close/fallback comes first finalizes.
+  let finalized = false
+  let finalizeFallback: ReturnType<typeof setTimeout> | null = null
+  const finalizeOnce = (code: number | null, signal: NodeJS.Signals | null): void => {
+    if (finalized) return
+    finalized = true
+    if (finalizeFallback) clearTimeout(finalizeFallback)
+    void finalizeAttempt(code, signal)
+  }
+
+  trainerChild.once('error', (error) => {
+    if (finalized) return
+    trainerState = { ...trainerState, error: String(error) }
     emitTrainerState()
-    if (!trainerPauseAfterCurrent) {
-      // Honor an explicit user promotion: pump in pure queue order instead of sticking to
-      // this job's batch (see trainerStickyPreferenceCleared).
-      const preferred = trainerStickyPreferenceCleared ? null : job.submissionId
-      trainerStickyPreferenceCleared = false
-      await pumpTrainerQueue(preferred)
-    }
+    // Node doesn't guarantee 'close' after a spawn failure; don't let the queue stall on it.
+    finalizeFallback = setTimeout(() => finalizeOnce(null, null), 3000)
   })
 
-  trainerChild.once('close', async (code, signal) => {
+  trainerChild.once('close', (code, signal) => finalizeOnce(code, signal))
+
+  async function finalizeAttempt(code: number | null, signal: NodeJS.Signals | null): Promise<void> {
     stopCheckpointPoll()
     if (stdoutRemainder.trim()) processTrainerOutputLine(stdoutRemainder.trim())
     if (stderrRemainder.trim()) processTrainerOutputLine(stderrRemainder.trim())
@@ -4160,7 +4444,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
             : job
         ))
       }
-      // Clean up the partial workspace for the killed run so the retry starts fresh.
+      // Only the payload file is removed; the workspace is kept (it may hold earlier attempts'
+      // graphs/checkpoints). That's safe because output selection only accepts .nam files
+      // written after the next attempt starts — see _find_output_model_path / isFreshForAttempt.
       try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
       trainerEmergencyRequeueJobId = null
       trainerState = {
@@ -4247,6 +4533,13 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
         pushCandidate(join(job.trainPath, `${job.modelName}.nam`))
 
         const workspaceNams = await findFilesRecursive(job.trainPath, (p) => /\.nam$/i.test(p))
+        // Same freshness rule as the runner's finder: a retry reuses the workspace, so an older
+        // attempt's .nam is still here and must not be promoted as this run's result.
+        const attemptStartedMs = Date.parse(trainerState.startedAt ?? '') || 0
+        const isFreshForAttempt = async (p: string): Promise<boolean> => {
+          const st = await fs.promises.stat(p).catch(() => null)
+          return !!st && st.mtimeMs >= attemptStartedMs - 2000
+        }
         if (workspaceNams.length > 0) {
           const scored = await Promise.all(workspaceNams.map(async (p) => {
             const st = await fs.promises.stat(p).catch(() => null)
@@ -4275,6 +4568,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           const sourceExists = await fs.promises.access(sourceModelPath).then(() => true).catch(() => false)
           if (!sourceExists) {
             attempted.push(`${sourceModelPath} (missing)`)
+            continue
+          }
+          if (!(await isFreshForAttempt(sourceModelPath))) {
+            attempted.push(`${sourceModelPath} (left over from an earlier attempt)`)
             continue
           }
           try {
@@ -4426,7 +4723,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       }
     }
 
-    if (wasCanceled && trainerState.outputModelPath) {
+    // Only a file inside THIS attempt's workspace can be this attempt's partial output. Until
+    // Python reports NAM_LAB_RESULT, outputModelPath is still the intended FINAL destination —
+    // where an existing model of the same name may well live — and cancelling deleted it.
+    if (wasCanceled && trainerState.outputModelPath && isPathInside(trainerState.outputModelPath, job.trainPath)) {
       try {
         if (fs.existsSync(trainerState.outputModelPath)) {
           suppressWatcher()
@@ -4454,7 +4754,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       processedWavPath,
       graphPath: promotedGraphPath,
       status: effectiveFinalStatus === 'success' ? 'success' : effectiveFinalStatus === 'error' ? 'error' : 'canceled',
-      attempts: job.attempts,
+      // `job` is the object from before startTrainerJob bumped the count in the queue.
+      attempts: job.attempts + 1,
       validationEsr: trainerState.validationEsr,
       thresholdEsr: job.thresholdEsr,
       epochs: job.epochs,
@@ -4472,6 +4773,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       trainedDespiteWarnings: effectiveFinalStatus === 'success' && !!trainerState.checkWarnings,
       checkWarnings: trainerState.checkWarnings || undefined,
       workspacePath: job.workspacePath,
+      namCaptureRecipe: namCaptureRecipeOf(job),
     })
 
     if (effectiveFinalStatus === 'error') {
@@ -4500,7 +4802,7 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       trainerState = { ...trainerState, status: 'idle', activeJobId: null, runId: null, progressPhase: 'Paused — click Resume to continue' }
       emitTrainerState()
     }
-  })
+  }
 }
 
 async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<void> {
@@ -4531,13 +4833,23 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
   try {
     await startTrainerJob(nextJob)
   } catch (error) {
+    if (error instanceof TrainerPreflightAborted) {
+      await handleTrainerPreflightAbort(nextJob, error.mode)
+      return
+    }
     const failureReason = String(error)
     updateTrainerJob(nextJob.jobId, {
       status: 'error',
       finishedAt: new Date().toISOString(),
       error: failureReason,
     })
-    appendTrainerCanceledHistory(nextJob, failureReason, '', 'error')
+    // The queue copy, not `nextJob`: startTrainerJob already bumped attempts on it.
+    appendTrainerCanceledHistory(
+      trainerQueue.find((queued) => queued.jobId === nextJob.jobId) ?? nextJob,
+      failureReason,
+      '',
+      'error'
+    )
     try {
       await recordTrainerFailureSnapshot(nextJob, failureReason, [])
     } catch (snapshotError) {
@@ -4561,6 +4873,31 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
     emitTrainerState()
     persistTrainerQueueThrottled()
   }
+}
+
+/** Finish a job stopped during preflight: the same outcomes Emergency Stop / Batch Cancel give a running one. */
+async function handleTrainerPreflightAbort(job: TrainerQueueJob, mode: 'requeue' | 'cancel'): Promise<void> {
+  if (mode === 'requeue') {
+    // Emergency Stop: back to the front of the queue, queue paused until Resume.
+    trainerQueue = trainerQueue.map((queued) => (queued.jobId === job.jobId ? resetTrainerJobForQueue(queued) : queued))
+    trainerPauseAfterCurrent = true
+    trainerState = {
+      ...TRAINER_IDLE_STATE,
+      queue: trainerQueue,
+      pauseAfterCurrent: trainerPauseAfterCurrent,
+      progressPhase: 'Stopped — queue paused',
+    }
+    emitTrainerState()
+    persistTrainerQueueThrottled()
+    return
+  }
+  const canceledAt = new Date().toISOString()
+  updateTrainerJob(job.jobId, { status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' })
+  appendTrainerCanceledHistory(trainerQueue.find((queued) => queued.jobId === job.jobId) ?? job, 'Batch canceled.')
+  trainerState = { ...TRAINER_IDLE_STATE, queue: trainerQueue, pauseAfterCurrent: trainerPauseAfterCurrent }
+  emitTrainerState()
+  if (pruneFinishedBatchesFromQueue()) emitTrainerState()
+  if (!trainerPauseAfterCurrent) await pumpTrainerQueue()
 }
 
 async function scanWavFilesInFolder(folderPath: string): Promise<string[]> {
@@ -4651,9 +4988,15 @@ async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise
 function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string): void {
   const countKey = profile.id
   const timerKey = makeTrainingWatcherTimerKey(profile.id, filePath)
+  // One pending count per FILE, not per schedule: replacing a pending timer used to add another
+  // count whose matching decrement never ran (the replaced callback was cancelled), so the
+  // pending figure only ever grew.
+  const alreadyPending = trainingWatcherPendingTimers.has(timerKey)
   clearTrainingWatcherTimer(timerKey)
-  trainingWatcherPendingCounts.set(countKey, (trainingWatcherPendingCounts.get(countKey) ?? 0) + 1)
-  emitTrainerState()
+  if (!alreadyPending) {
+    trainingWatcherPendingCounts.set(countKey, (trainingWatcherPendingCounts.get(countKey) ?? 0) + 1)
+    emitTrainerState()
+  }
   const timer = setTimeout(async () => {
     try {
       if (!fs.existsSync(filePath)) return
@@ -4661,9 +5004,16 @@ function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string)
       await wait(1200)
       const second = await statTrainingSource(filePath)
       if (first.sizeBytes !== second.sizeBytes || first.mtimeMs !== second.mtimeMs) {
+        // Still being written. The finally below must leave this replacement alone — it used to
+        // clear "the timer for this key", which by then WAS this replacement, so a file still
+        // copying when first seen was never queued unless another fs.watch event happened along.
         scheduleTrainingWatcherFile(profile, filePath)
         return
       }
+      // The profile may have been disabled or edited while we waited; use what's current.
+      const current = trainingProfiles.find((candidate) => candidate.id === profile.id)
+      if (!current || !isTrainingProfileActive(current)) return
+      profile = current
       const payloads = await buildTrainerPayloadsForProfile(
         profile,
         trainerConfiguredPythonPath,
@@ -4681,9 +5031,13 @@ function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string)
     } catch (error) {
       log(`training watcher enqueue failed for ${filePath}: ${String(error)}`)
     } finally {
-      trainingWatcherPendingCounts.set(countKey, Math.max(0, (trainingWatcherPendingCounts.get(countKey) ?? 1) - 1))
-      clearTrainingWatcherTimer(timerKey)
-      emitTrainerState()
+      // Only if no newer timer took over this file (a reschedule above, or a later fs.watch
+      // event while this one was mid-await) — that one owns the count and the map entry now.
+      if (trainingWatcherPendingTimers.get(timerKey) === timer) {
+        trainingWatcherPendingTimers.delete(timerKey)
+        trainingWatcherPendingCounts.set(countKey, Math.max(0, (trainingWatcherPendingCounts.get(countKey) ?? 1) - 1))
+        emitTrainerState()
+      }
     }
   }, 1200)
   trainingWatcherPendingTimers.set(timerKey, timer)
@@ -7986,15 +8340,42 @@ app.whenReady().then(async () => {
   // IPC: Detect whether a non-NAM-Lab default handler is registered for .nam files
   ipcMain.handle('app:detectNamPlayer', async () => {
     try {
-      const { execSync } = await import('child_process')
+      const { execFileSync } = await import('child_process')
       if (process.platform === 'win32') {
-        const assoc = execSync('cmd /c assoc .nam', { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim()
-        if (!assoc.includes('=')) return false
-        const progId = assoc.split('=')[1].trim()
-        const ftype = execSync(`cmd /c ftype ${progId}`, { encoding: 'utf8', timeout: 3000, windowsHide: true }).trim()
+        // `assoc`/`ftype` only see machine-wide classes, so a per-user association (how most
+        // installers and Explorer's "Open with" register) made ftype fail and print "File type
+        // 'NAM' not found" to the console. Read the registry instead, per-user choice first, with
+        // stderr piped so a missing key never reaches the console.
+        const reg = (args: string[]): string => {
+          try {
+            return execFileSync('reg', ['query', ...args], {
+              encoding: 'utf8',
+              timeout: 3000,
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe']
+            })
+          } catch {
+            return ''
+          }
+        }
+        const valueOf = (output: string, name: string): string | null => {
+          const line = output.split(/\r?\n/).find((l) => l.trim().startsWith(name))
+          const match = line?.match(/REG_(?:EXPAND_)?SZ\s+(.*)$/)
+          return match ? match[1].trim() : null
+        }
+        // `||` not `??`: an empty per-user default (seen in the wild) must fall through to the
+        // machine-wide one rather than end the lookup. The progId can contain spaces — NAM Lab's
+        // own is "NAM Capture" — which is what broke the old unquoted `ftype ${progId}`.
+        const progId =
+          valueOf(reg(['HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.nam\\UserChoice', '/v', 'ProgId']), 'ProgId') ||
+          valueOf(reg(['HKCR\\.nam', '/ve']), '(Default)') ||
+          valueOf(reg(['HKLM\\Software\\Classes\\.nam', '/ve']), '(Default)')
+        if (!progId) return false
+        const command = valueOf(reg([`HKCR\\${progId}\\shell\\open\\command`, '/ve']), '(Default)')
+        if (!command) return false
         const ourExe = process.execPath.replace(/\\/g, '/').toLowerCase()
-        const ftypeLower = ftype.replace(/\\/g, '/').toLowerCase()
-        return ftypeLower.includes('.exe') && !ftypeLower.includes(ourExe)
+        const commandLower = command.replace(/\\/g, '/').toLowerCase()
+        return commandLower.includes('.exe') && !commandLower.includes(ourExe)
       }
       // macOS / Linux: no reliable shell-only method â€” rely on manual path setting
       return false
@@ -8024,6 +8405,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:getState', async () => ({ ...trainerState, history: trainerHistory }))
 
   ipcMain.handle('trainer:cancel', async () => {
+    // Still in preflight: no child to kill yet, so flag it and let startTrainerJob stop itself
+    // at its next checkpoint (it requeues the job and pauses, as a stop of a running job does).
+    if (!trainerChild && trainerState.status === 'starting' && trainerState.activeJobId) {
+      trainerPreflightAbort = { jobId: trainerState.activeJobId, mode: 'requeue' }
+      trainerPauseAfterCurrent = true
+      trainerState = { ...trainerState, progressPhase: 'Stopping…', pauseAfterCurrent: true }
+      emitTrainerState()
+      return { success: true }
+    }
     if (!trainerChild || trainerState.status !== 'running' && trainerState.status !== 'starting') {
       return { success: false, error: 'No training run is currently active.' }
     }
@@ -8253,10 +8643,22 @@ app.whenReady().then(async () => {
         const normFile = normalizePath(filePath)
         const activeJob = activeJobId ? trainerQueue.find((j) => j.jobId === activeJobId) : null
         if (activeJob && normalizePath(activeJob.outputPath) === normFile && activeJob.profileId === profileId && activeJob.architecture === arch) return { architecture: arch, status: 'running' as const }
-        if (trainerQueue.some((j) => normalizePath(j.outputPath) === normFile && j.profileId === profileId && j.architecture === arch && j.status === 'queued')) return { architecture: arch, status: 'queued' as const }
-        if (trainerSkipped.some((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch)) return { architecture: arch, status: 'skipped' as const }
-        const hist = trainerHistory.find((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch)
-        if (hist) return { architecture: arch, status: hist.status as 'done' | 'failed' | 'canceled' | 'skipped' }
+        if (trainerQueue.some((j) => normalizePath(j.outputPath) === normFile && j.profileId === profileId && j.architecture === arch && (j.status === 'queued' || j.status === 'staged'))) return { architecture: arch, status: 'queued' as const }
+        // Same identity rule as the watcher's own dedup: a result describes THIS file only when
+        // the fingerprint matches (or the row predates fingerprints). Otherwise an old result
+        // labelled a replaced WAV — "Done" next to a file that had never been trained.
+        const sameFile = (e: { sourceSizeBytes: number | null; sourceMtimeMs: number | null }) =>
+          (e.sourceSizeBytes == null && e.sourceMtimeMs == null) || (e.sourceSizeBytes === sizeBytes && e.sourceMtimeMs === mtimeMs)
+        if (trainerSkipped.some((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch && sameFile(e))) return { architecture: arch, status: 'skipped' as const }
+        const hist = trainerHistory
+          .filter((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch && sameFile(e))
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]
+        // History speaks success/error; the modal's vocabulary is done/failed. A cast doesn't
+        // translate strings, so those rows rendered with no label and no style.
+        if (hist) {
+          const status = hist.status === 'success' ? 'done' : hist.status === 'error' ? 'failed' : hist.status
+          return { architecture: arch, status: status as 'done' | 'failed' | 'canceled' | 'skipped' }
+        }
         return { architecture: arch, status: 'pending' as const }
       })
       return { filePath, fileName: basename(filePath), sizeBytes, mtimeMs, statuses }
@@ -8273,7 +8675,7 @@ app.whenReady().then(async () => {
     saveTrainerSkipped()
     saveTrainerHistory()
     emitTrainerHistory()
-    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
+    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() }, undefined, { explicitRetry: true })
     if (payloads.length > 0) {
       await enqueueTrainingPayloads(payloads)
       await ensureTrainingWatcherAutoStart(profile)
@@ -8288,9 +8690,14 @@ app.whenReady().then(async () => {
     const norm = normalizePath(filePath)
 
     if (action === 'mark-skipped') {
+      // Fingerprinted, so the skip covers THIS file: the watcher's dedup compares size+mtime, and
+      // a skip stored without them never matched, so "skipped" files were queued anyway. A later
+      // re-capture written to the same path is a different file and is not skipped.
+      const fingerprint = await statTrainingSource(filePath).catch(() => null)
       for (const arch of profile.architectures) {
-        if (!trainerSkipped.some((e) => e.profileId === profileId && normalizePath(e.sourcePath) === norm && e.architecture === arch)) {
-          appendTrainerSkipped({ skipId: crypto.randomUUID(), profileId, profileName: profile.name, sourcePath: filePath, architecture: arch as TrainerArchitecture, sourceSizeBytes: null, sourceMtimeMs: null, skippedAt: new Date().toISOString(), reason: 'manually skipped' })
+        if (!trainerSkipped.some((e) => e.profileId === profileId && normalizePath(e.sourcePath) === norm && e.architecture === arch &&
+          e.sourceSizeBytes === (fingerprint?.sizeBytes ?? null) && e.sourceMtimeMs === (fingerprint?.mtimeMs ?? null))) {
+          appendTrainerSkipped({ skipId: crypto.randomUUID(), profileId, profileName: profile.name, sourcePath: filePath, architecture: arch as TrainerArchitecture, sourceSizeBytes: fingerprint?.sizeBytes ?? null, sourceMtimeMs: fingerprint?.mtimeMs ?? null, skippedAt: new Date().toISOString(), reason: 'manually skipped' })
         }
       }
       trainerQueue = trainerQueue.filter((j) => !(j.profileId === profileId && normalizePath(j.outputPath) === norm && j.status === 'queued'))
@@ -8312,7 +8719,7 @@ app.whenReady().then(async () => {
     saveTrainerHistory()
     emitTrainerHistory()
 
-    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
+    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() }, undefined, { explicitRetry: true })
 
     if (action === 'retrain-new') {
       for (const payload of payloads) {
@@ -8440,10 +8847,25 @@ app.whenReady().then(async () => {
     return { success: true, removed }
   })
 
+  // The explicit "Clear finished" button. It used to call the AUTOMATIC prune, which deliberately
+  // keeps any batch with a failure in it — so a fully failed batch was counted as clearable, the
+  // button reported success, and the rows stayed. This applies exactly the rule the button counts
+  // by (TrainingPanel's clearableFinishedCount): terminal rows of batches with nothing left to run.
   ipcMain.handle('trainer:clearFinished', async () => {
-    pruneFinishedBatchesFromQueue()
+    const activeId = trainerState.activeJobId
+    const allTerminal = new Map<string, boolean>()
+    for (const job of trainerQueue) {
+      if (!job.submissionId || job.status === 'staged') continue
+      allTerminal.set(job.submissionId, (allTerminal.get(job.submissionId) ?? true) && isTrainerQueueTerminalStatus(job.status))
+    }
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) =>
+      job.jobId === activeId ||
+      !isTrainerQueueTerminalStatus(job.status) ||
+      (!!job.submissionId && allTerminal.get(job.submissionId) !== true)
+    )
     emitTrainerState()
-    return { success: true }
+    return { success: true, removed: before - trainerQueue.length }
   })
 
   // Permanently remove ALL watcher-sourced jobs from the queue and mark each one's source file as
@@ -8617,14 +9039,26 @@ app.whenReady().then(async () => {
     const activeIsInBatch = trainerState.activeJobId != null &&
       trainerQueue.find(j => j.jobId === trainerState.activeJobId)?.submissionId === submissionId
     // Cancel all queued/staged jobs in this submission
+    const canceledPending: TrainerQueueJob[] = []
     trainerQueue = trainerQueue.map((job) => {
       if (job.submissionId !== submissionId) return job
       if (job.status === 'queued' || job.status === 'staged') {
         found = true
-        return { ...job, status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' }
+        const canceled: TrainerQueueJob = { ...job, status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' }
+        canceledPending.push(canceled)
+        return canceled
       }
       return job
     })
+    // Record them: only a RUNNING job's finalizer wrote history, so a batch canceled before it
+    // started left no trace once its queue rows were dismissed. The active job (if any) is not
+    // in this list — its own finalizer records it.
+    for (const job of canceledPending) appendTrainerCanceledHistory(job, 'Batch canceled before it started.')
+    // Active job still in preflight: no child yet, so have startTrainerJob cancel itself.
+    if (activeIsInBatch && !trainerChild && trainerState.status === 'starting' && trainerState.activeJobId) {
+      found = true
+      trainerPreflightAbort = { jobId: trainerState.activeJobId, mode: 'cancel' }
+    }
     // Also kill the active run if it belongs to this submission
     if (activeIsInBatch && trainerChild && (trainerState.status === 'running' || trainerState.status === 'starting')) {
       found = true
@@ -8701,11 +9135,18 @@ app.whenReady().then(async () => {
         // Label change applies to all jobs in the submission (so the header always shows the new name).
         // Settings changes (epochs, ESR, LR, input DI) and editedAt apply only to queued jobs.
         const isEditable = job.status === 'queued' || job.status === 'staged'
-        const settingsUpdate = isEditable && hasSettingsChange ? {
+        // A2 trains from NAM's own packed config, which the runner doesn't override, so an LR
+        // edit would be stored and shown as "edited" while changing nothing. Leave A2 jobs alone;
+        // the editor says so.
+        const isA2 = job.namMode === 'a2'
+        const jobHasSettingsChange = isA2
+          ? typeof changes.epochs === 'number' || changes.thresholdEsr !== undefined || typeof changes.inputPath === 'string'
+          : hasSettingsChange
+        const settingsUpdate = isEditable && jobHasSettingsChange ? {
           ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
           ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
-          ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
-          ...(typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
+          ...(!isA2 && typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
+          ...(!isA2 && typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
           ...(typeof changes.inputPath === 'string' ? { inputPath: changes.inputPath } : {}),
           editedAt: now,
         } : {}
@@ -8724,6 +9165,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:retryHistoryEntry', async (_event, historyId: string) => {
     const entry = trainerHistory.find((item) => item.historyId === historyId)
     if (!entry) return { success: false, error: 'Training history entry not found.' }
+    // IR Lab rows carry a preset id in profileId, which used to send them down the watcher-profile
+    // path below and rebuild them against the global DI. They have their own recipe.
+    if (entry.sourceMode === 'nam-capture-import') return retryNamCaptureHistory([entry], `Retry - ${entry.finalModelName || 'capture'}`)
     if (!entry.profileId) return { success: false, error: 'Only profile-backed watcher or folder runs can be retried from history right now.' }
     const profile = trainingProfiles.find((item) => item.id === entry.profileId)
     if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
@@ -8745,7 +9189,9 @@ app.whenReady().then(async () => {
         trainerConfiguredInputPath,
         [sourcePath],
         entry.sourceMode,
-        submissionMeta
+        submissionMeta,
+        undefined,
+        { explicitRetry: true }
       )).filter((payload) => payload.architecture === entry.architecture)
       : [buildTrainerPayloadFromHistoryEntryFallback(entry, trainerConfiguredPythonPath, trainerConfiguredInputPath, sourcePath, submissionMeta)]
     if (payloads.length === 0) {
@@ -8758,6 +9204,13 @@ app.whenReady().then(async () => {
       emitTrainerHistory()
     }
     return { success: queued > 0, queued, error: queued > 0 ? undefined : 'That retry did not add a new queue item.' }
+  })
+
+  ipcMain.handle('trainer:retryNamCaptureHistory', async (_event, historyIds: string[], submissionLabel: string) => {
+    if (!Array.isArray(historyIds) || historyIds.length === 0) return { success: false, error: 'Nothing to retry.' }
+    const ids = new Set(historyIds)
+    const entries = trainerHistory.filter((e) => ids.has(e.historyId) && e.sourceMode === 'nam-capture-import')
+    return retryNamCaptureHistory(entries, typeof submissionLabel === 'string' && submissionLabel ? submissionLabel : 'Retry')
   })
 
   ipcMain.handle('trainer:markHistoryRetried', async (_event, historyIds: string[]) => {

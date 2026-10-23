@@ -1,4 +1,5 @@
 import { impulseSeconds, trimImpulse, type ImpulseResponse } from './impulseTrim'
+import { readModelSampleRate } from './playerAudio'
 
 /**
  * Real-time NAM engine: guitar in -> model -> cabinet IR -> speakers.
@@ -541,8 +542,99 @@ export async function listAudioInputs(): Promise<LiveDeviceInfo[]> {
     }))
 }
 
+/**
+ * Thrown by `start()` when `stop()` (or a newer `start()`) superseded it mid-startup.
+ *
+ * Not a failure: the caller asked for this session to end. Callers should swallow it rather than
+ * show it, and must not tear anything down in response — the newer session owns the engine now.
+ */
+export class LiveStartCancelledError extends Error {
+  constructor() {
+    super('Live start was cancelled')
+    this.name = 'LiveStartCancelledError'
+  }
+}
+
+/** How long a worklet may take to report its model loaded before start() gives up on it. */
+const MODEL_LOAD_TIMEOUT_MS = 20000
+
+/**
+ * Resolves once a NAM worklet reports its model loaded, or fails to.
+ *
+ * start() used to post loadModel and carry on regardless, so a model the core rejected left the
+ * session "running" through an unloaded stage. Errors from other stages (e.g. a process-time
+ * non-finite warning) are not load results, so only loadModel/resetModel errors settle this.
+ */
+class ModelReadiness {
+  readonly promise: Promise<{ ok: true } | { ok: false; error: string }>
+  private settle!: (result: { ok: true } | { ok: false; error: string }) => void
+  private done = false
+
+  constructor() {
+    this.promise = new Promise((resolve) => {
+      this.settle = resolve
+    })
+    setTimeout(() => this.finish({ ok: false, error: 'timed out waiting for the model to load' }), MODEL_LOAD_TIMEOUT_MS)
+  }
+
+  /** Feed a worklet message; returns true when it was a load result and has been consumed. */
+  handle(data: { type?: string; error?: string; stage?: string }): boolean {
+    if (this.done) return false
+    if (data.type === 'modelLoaded') {
+      this.finish({ ok: true })
+      return true
+    }
+    if (data.type === 'error' && (data.stage === 'loadModel' || data.stage === 'resetModel' || data.stage === 'instantiate')) {
+      this.finish({ ok: false, error: data.error ?? 'unknown error' })
+      return true
+    }
+    return false
+  }
+
+  private finish(result: { ok: true } | { ok: false; error: string }): void {
+    if (this.done) return
+    this.done = true
+    this.settle(result)
+  }
+}
+
+/**
+ * Peak ceiling for the live output, matching the offline path's PEAK_CEILING.
+ *
+ * Live has no measured normalisation — it commits to a metadata-derived gain before any audio
+ * exists, and a real A2 model renders peaks above 10 from a normal guitar input. Without a final
+ * stage that went straight to the headphones over-range.
+ */
+const LIVE_PEAK_CEILING = 0.99
+
+/** Hard-clip curve at LIVE_PEAK_CEILING: the backstop behind the limiter, never the main tool. */
+function makeCeilingCurve(): Float32Array<ArrayBuffer> {
+  const n = 4097
+  const curve = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1
+    curve[i] = Math.max(-LIVE_PEAK_CEILING, Math.min(LIVE_PEAK_CEILING, x))
+  }
+  return curve
+}
+
 export class LiveEngine {
   private ctx: AudioContext | null = null
+  /**
+   * Bumped by every stop(). A start() that sees it change after an await has been superseded
+   * and must not touch the graph again — otherwise closing the player mid-startup could still
+   * open the mic and connect output a moment later.
+   */
+  private lifecycle = 0
+  /** Bumped by every cabinet rebuild; a build that resolves after a newer one is discarded. */
+  private cabinetBuild = 0
+  /** Same guard for the delay and reverb impulse loaders. */
+  private delayIrLoad = 0
+  private reverbIrLoad = 0
+  /** Final output protection: limiter, then a hard ceiling, then the destination. */
+  private limiter: DynamicsCompressorNode | null = null
+  private dcBlocker: IIRFilterNode | null = null
+  private ceiling: WaveShaperNode | null = null
   private stream: MediaStream | null = null
   private source: MediaStreamAudioSourceNode | null = null
   private splitter: ChannelSplitterNode | null = null
@@ -871,14 +963,35 @@ export class LiveEngine {
 
   async start(options: LiveStartOptions): Promise<void> {
     await this.stop()
+    const session = this.lifecycle
+    const guard = (): void => {
+      if (this.lifecycle !== session) throw new LiveStartCancelledError()
+    }
 
     try {
       const { module, manifest } = await LiveEngine.loadWasm()
+      guard()
 
-      // Ask for the model's rate so the DSP runs at what it was trained for. The browser may
-      // refuse and pick the device rate; that's reported rather than fought.
-      const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' })
+      // Run the context at the model's own rate. The NAM core does no rate conversion — Reset()
+      // only records the rate — so a 44.1k or 96k capture run at 48k has its learned filters
+      // shifted. Chromium resamples the device I/O to whatever the context runs at.
+      const modelRate = readModelSampleRate(options.modelJson)
+      const ctx = new AudioContext({ sampleRate: modelRate, latencyHint: 'interactive' })
       this.ctx = ctx
+      if (ctx.sampleRate !== modelRate) {
+        this.onError(
+          `Audio is running at ${ctx.sampleRate} Hz but this capture was trained at ${modelRate} Hz, so its tone will be slightly off.`
+        )
+      }
+      if (options.preModelJson) {
+        const preRate = readModelSampleRate(options.preModelJson)
+        if (preRate !== ctx.sampleRate) {
+          // One context, one rate: the pedal stage can't also run at its own.
+          this.onError(
+            `The pedal capture was trained at ${preRate} Hz but the rig runs at ${ctx.sampleRate} Hz (the amp's rate), so the pedal's tone will be slightly off.`
+          )
+        }
+      }
 
       // Every voice-call DSP must be off or it mangles a guitar signal: AGC pumps the level,
       // noise suppression eats sustain and pick attack, echo cancellation gates entirely.
@@ -887,7 +1000,7 @@ export class LiveEngine {
       // interface's inputs together rather than give you the one your guitar is in; the channel
       // is chosen further down the graph instead, where it can be changed without reopening the
       // device.
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           ...(options.deviceId ? { deviceId: { exact: options.deviceId } } : {}),
           echoCancellation: false,
@@ -896,8 +1009,16 @@ export class LiveEngine {
         },
         video: false
       })
+      // Stopped while the permission prompt / device open was pending: nothing else will ever
+      // release this stream, and an open input keeps the OS mic indicator lit.
+      if (this.lifecycle !== session) {
+        stream.getTracks().forEach((track) => track.stop())
+        throw new LiveStartCancelledError()
+      }
+      this.stream = stream
 
       await ctx.audioWorklet.addModule('/nam-worklet.js')
+      guard()
       // Loaded unconditionally so switching to the plate reverb mid-session is instant. It is a
       // small text module; the cost is a parse, not a WASM compile.
       try {
@@ -907,6 +1028,7 @@ export class LiveEngine {
         this.plateAvailable = false
         this.onError(`Plate reverb unavailable: ${error instanceof Error ? error.message : String(error)}`)
       }
+      guard()
       try {
         await ctx.audioWorklet.addModule('/gate-worklet.js')
         this.gateAvailable = true
@@ -914,6 +1036,7 @@ export class LiveEngine {
         this.gateAvailable = false
         this.onError(`Noise gate unavailable: ${error instanceof Error ? error.message : String(error)}`)
       }
+      guard()
 
       this.worklet = new AudioWorkletNode(ctx, 'nam-processor', {
         numberOfInputs: 1,
@@ -924,8 +1047,10 @@ export class LiveEngine {
         processorOptions: { wasmModule: module, manifest }
       })
 
+      const mainReady = new ModelReadiness()
       this.worklet.port.onmessage = (event: MessageEvent) => {
         const data = event.data as { type?: string; error?: string; stage?: string }
+        if (mainReady.handle(data)) return
         if (data.type === 'error') {
           this.onError(`${data.stage ?? 'worklet'}: ${data.error ?? 'unknown error'}`)
         }
@@ -977,6 +1102,7 @@ export class LiveEngine {
       // Reuses the same compiled WASM module: a second AudioWorkletNode is a fully separate
       // instance with its own memory, the normal way to run two of one processor.
       let namInput: AudioNode = this.worklet
+      let preReady: ModelReadiness | null = null
       if (options.preModelJson) {
         this.preWorklet = new AudioWorkletNode(ctx, 'nam-processor', {
           numberOfInputs: 1,
@@ -984,8 +1110,11 @@ export class LiveEngine {
           outputChannelCount: [1],
           processorOptions: { wasmModule: module, manifest }
         })
+        const readiness = new ModelReadiness()
+        preReady = readiness
         this.preWorklet.port.onmessage = (event: MessageEvent) => {
           const data = event.data as { type?: string; error?: string; stage?: string }
+          if (readiness.handle(data)) return
           if (data.type === 'error') {
             this.onError(`pedal stage ${data.stage ?? 'worklet'}: ${data.error ?? 'unknown error'}`)
           }
@@ -1021,37 +1150,81 @@ export class LiveEngine {
       }
       if (!this.gate) this.splitter.connect(namInput, this.inputChannel, 0)
 
+      // Nothing is connected to the destination yet, so waiting here costs silence, not noise.
+      // A failed amp model is fatal — the worklet now stays silent rather than passing dry input,
+      // so "running" would otherwise mean "running, inaudibly". A failed pedal is not: bypass
+      // that stage (dry into the amp) and say so, the same fallback as an unreadable pedal file.
+      const mainResult = await mainReady.promise
+      guard()
+      if (!mainResult.ok) throw new Error(`The capture could not be loaded: ${mainResult.error}`)
+      if (preReady) {
+        const preResult = await preReady.promise
+        guard()
+        if (!preResult.ok) {
+          this.preWorklet?.port.postMessage({ type: 'setBypass', bypass: true })
+          this.onError(`Pedal capture could not be loaded, continuing without it: ${preResult.error}`)
+        }
+      }
+
       this.buildFxChain(ctx)
       this.buildPlate(ctx)
       this.setGate(options.gate ?? DEFAULT_GATE)
       this.setEq(options.eq ?? DEFAULT_EQ)
       this.setDelay(options.delay ?? DEFAULT_DELAY)
       if (options.delayIr) await this.setDelayIr(options.delayIr)
+      guard()
       this.setEchoLab(options.echoLab ?? DEFAULT_ECHO_LAB)
       this.setChorus(options.chorus ?? DEFAULT_CHORUS)
       this.setReverb(options.reverb ?? DEFAULT_REVERB)
       if (options.reverbIr) await this.setReverbIr(options.reverbIr)
+      guard()
 
       this.irMix = Math.max(0, Math.min(1, options.irMix ?? 1))
       this.irA = options.ir ?? null
       this.irB = null
       this.irBlend = 0
       await this.wireCabinets()
+      guard()
+
+      // Output protection, after every gain and effect. A transparent limiter catches overs from
+      // hot models, EQ boosts and stacked effects; the hard ceiling behind it guarantees nothing
+      // over-range reaches the device even during the limiter's attack.
+      this.limiter = ctx.createDynamicsCompressor()
+      this.limiter.threshold.value = -1
+      this.limiter.knee.value = 0
+      this.limiter.ratio.value = 20
+      this.limiter.attack.value = 0.001
+      this.limiter.release.value = 0.1
+      this.ceiling = ctx.createWaveShaper()
+      this.ceiling.curve = makeCeilingCurve()
+      // Same one-pole 10 Hz DC blocker the offline path applies (applyDcBlocker), as an exact
+      // IIR rather than an approximating biquad: asymmetric high-gain models leave a DC offset
+      // that would otherwise eat limiter headroom here and nowhere in preview.
+      const pole = 1 - (2 * Math.PI * 10) / ctx.sampleRate
+      this.dcBlocker = ctx.createIIRFilter([1, -1], [1, -pole])
+      this.outputGain.connect(this.dcBlocker)
+      this.dcBlocker.connect(this.limiter)
+      this.limiter.connect(this.ceiling)
 
       // Post-everything, so the meter shows what actually reaches the speakers.
       this.analyser = ctx.createAnalyser()
       this.analyser.fftSize = 2048
-      this.outputGain.connect(this.analyser)
-      this.outputGain.connect(ctx.destination)
+      this.ceiling.connect(this.analyser)
+      this.ceiling.connect(ctx.destination)
 
       if (options.outputDeviceId) await this.setOutputDevice(options.outputDeviceId)
+      guard()
 
       // ~33Hz poll for Echo Lab's ducking envelope follower — see the buildFxChain comment by
       // echoLabDuckAnalyser for why this is a plain timer rather than a worklet.
       this.echoLabDuckTimerId = setInterval(() => this.updateEchoLabDuck(), 30)
 
       await ctx.resume()
+      guard()
     } catch (error) {
+      // A cancelled start was already torn down by the stop() that cancelled it, and a newer
+      // start() may own the engine by now — stopping again here would kill that one.
+      if (error instanceof LiveStartCancelledError) throw error
       await this.stop()
       throw error instanceof Error ? error : new Error(String(error))
     }
@@ -1776,12 +1949,22 @@ export class LiveEngine {
    */
   async setDelayIr(ir: ImpulseResponse | null): Promise<void> {
     const ctx = this.ctx
-    if (!ctx || !this.tremOut || !this.delayConvWet) return
+    if (!ctx || !this.delayIn || !this.delayConvWet) return
+    const load = ++this.delayIrLoad
 
-    try {
-      this.delayConvolver?.disconnect()
-    } catch {
-      // Already disconnected.
+    if (this.delayConvolver) {
+      // Its INPUT too: disconnecting only the output left delayIn feeding a convolver nobody
+      // could hear, which kept convolving for the rest of the session — one more per swap.
+      try {
+        this.delayIn.disconnect(this.delayConvolver)
+      } catch {
+        // Already disconnected.
+      }
+      try {
+        this.delayConvolver.disconnect()
+      } catch {
+        // Already disconnected.
+      }
     }
     this.delayConvolver = null
     this.delayIrSeconds = 0
@@ -1793,6 +1976,8 @@ export class LiveEngine {
     const channels = await Promise.all(
       trimmed.channels.map((c) => resampleForContext(c, trimmed.sampleRate, ctx.sampleRate))
     )
+    // A newer load (or stop) happened while resampling; it owns the slot now.
+    if (load !== this.delayIrLoad || this.ctx !== ctx || !this.delayIn || !this.delayConvWet) return
     const length = channels[0].length
     if (length === 0) return
 
@@ -1805,7 +1990,9 @@ export class LiveEngine {
     this.delayIrSeconds = impulseSeconds({ channels: [channels[0]], sampleRate: ctx.sampleRate })
     this.delayIrChannels = channels.length
 
-    this.tremOut.connect(this.delayConvolver)
+    // From delayIn, like the algorithmic delay, so both modes follow the Delay/Echo Lab order.
+    // tremOut bypassed Echo Lab when Echo Lab was placed first.
+    this.delayIn.connect(this.delayConvolver)
     this.delayConvolver.connect(this.delayConvWet)
     this.setDelay({})
   }
@@ -2235,13 +2422,21 @@ export class LiveEngine {
   async setReverbIr(ir: ImpulseResponse | null): Promise<void> {
     const ctx = this.ctx
     if (!ctx || !this.fxMid || !this.outputGain) return
+    const load = ++this.reverbIrLoad
 
     if (this.reverbConvolver || this.reverbWet) {
-      try {
-        this.reverbConvolver?.disconnect()
-        this.reverbWet?.disconnect()
-      } catch {
-        // Already disconnected.
+      // Input edge as well as outputs — see setDelayIr. With an 11s reverb IR, every swap
+      // otherwise left another full-length convolution running unheard.
+      for (const disconnect of [
+        () => this.reverbConvolver && this.fxMid?.disconnect(this.reverbConvolver),
+        () => this.reverbConvolver?.disconnect(),
+        () => this.reverbWet?.disconnect()
+      ]) {
+        try {
+          disconnect()
+        } catch {
+          // Already disconnected.
+        }
       }
       this.reverbConvolver = null
       this.reverbWet = null
@@ -2260,6 +2455,7 @@ export class LiveEngine {
         resampleForContext(channel, trimmed.sampleRate, ctx.sampleRate)
       )
     )
+    if (load !== this.reverbIrLoad || this.ctx !== ctx || !this.fxMid || !this.outputGain) return
     const length = channels[0].length
     if (length === 0) return
 
@@ -2325,27 +2521,42 @@ export class LiveEngine {
     for (let i = 0; i < irSamples.length; i++) irEnergy += irSamples[i] * irSamples[i]
     const makeup = irEnergy > 0 ? 1 / Math.sqrt(irEnergy) : 1
 
+    // Not connected here: the caller connects only once it knows this build is still current,
+    // so an overlapping rebuild can't leave an orphaned, still-audible branch behind.
     const wetGain = ctx.createGain()
-    this.worklet.connect(convolver)
     convolver.connect(wetGain)
-    wetGain.connect(this.fxInput)
     return { convolver, wetGain, makeup }
+  }
+
+  /**
+   * The blend actually applied, given which slots hold a cab.
+   *
+   * irBlend is the user's setting and is kept as-is, so reloading a slot restores it. But with
+   * only one slot loaded it must not apply: blended fully to B and then clearing B left A at zero
+   * wet gain and the dry path at zero too — total silence, with the blend control hidden.
+   */
+  private effectiveBlend(): number {
+    if (this.convolverA && !this.convolverB) return 0
+    if (this.convolverB && !this.convolverA) return 1
+    return this.irBlend
   }
 
   /** Sets each slot's wetGain (and the shared dryGain) from the current irMix/irBlend — the only
    * thing setBlend()/setIrMix() need to touch, no rebuild. */
   private applyCabinetGains(): void {
-    if (this.wetGainA) this.wetGainA.gain.value = this.irMix * this.irMakeupA * (1 - this.irBlend)
-    if (this.wetGainB) this.wetGainB.gain.value = this.irMix * this.irMakeupB * this.irBlend
+    const blend = this.effectiveBlend()
+    if (this.wetGainA) this.wetGainA.gain.value = this.irMix * this.irMakeupA * (1 - blend)
+    if (this.wetGainB) this.wetGainB.gain.value = this.irMix * this.irMakeupB * blend
     if (this.dryGain) this.dryGain.gain.value = 1 - this.irMix
   }
 
   /** Tears down and rebuilds both cabinet slots from this.irA/this.irB — same all-or-nothing
    * rebuild style the original single-slot wireIr() used, just parameterized over two IRs
    * instead of one. Assumes the caller has already disconnected the worklet's outputs. */
-  private async wireCabinets(): Promise<void> {
+  private async wireCabinets(): Promise<boolean> {
     const ctx = this.ctx
-    if (!ctx || !this.worklet || !this.fxInput) return
+    const build = ++this.cabinetBuild
+    if (!ctx || !this.worklet || !this.fxInput) return false
 
     for (const node of [this.convolverA, this.wetGainA, this.convolverB, this.wetGainB, this.dryGain]) {
       try {
@@ -2362,12 +2573,27 @@ export class LiveEngine {
     this.irMakeupB = 1
     this.dryGain = null
 
-    if ((!this.irA && !this.irB) || this.irMix <= 0) {
+    // Built even at 0% mix (wet gain just sits at zero). Skipping them there connected NAM
+    // straight to FX, and setIrMix() only adjusts existing gains — so raising the mix from 0
+    // never brought the cab back until something else forced a rebuild.
+    if (!this.irA && !this.irB) {
       this.worklet.connect(this.fxInput)
-      return
+      return true
     }
 
     const [a, b] = await Promise.all([this.buildCabinetSlot(this.irA), this.buildCabinetSlot(this.irB)])
+    // Superseded while resampling (another slot change, or stop): drop these nodes unconnected.
+    // The newer build does the wiring.
+    if (build !== this.cabinetBuild || this.ctx !== ctx || !this.worklet || !this.fxInput) {
+      return false
+    }
+    const worklet = this.worklet
+    const fxInput = this.fxInput
+    for (const slot of [a, b]) {
+      if (!slot) continue
+      worklet.connect(slot.convolver)
+      slot.wetGain.connect(fxInput)
+    }
     if (a) {
       this.convolverA = a.convolver
       this.wetGainA = a.wetGain
@@ -2380,10 +2606,11 @@ export class LiveEngine {
     }
 
     this.dryGain = ctx.createGain()
-    this.worklet.connect(this.dryGain)
-    this.dryGain.connect(this.fxInput)
+    worklet.connect(this.dryGain)
+    this.dryGain.connect(fxInput)
 
     this.applyCabinetGains()
+    return true
   }
 
   /**
@@ -2414,8 +2641,9 @@ export class LiveEngine {
       // Already disconnected.
     }
     // The tap is on the source, not the worklet, so it survives this rewiring untouched.
-    await this.wireCabinets()
-    if (this.ctx !== ctx) return
+    // A superseded rebuild leaves the fade-up to the newer one, which is still mid-flight.
+    const installed = await this.wireCabinets()
+    if (!installed || this.ctx !== ctx) return
 
     const resumeAt = ctx.currentTime
     gain.cancelScheduledValues(resumeAt)
@@ -2448,17 +2676,18 @@ export class LiveEngine {
     if (!this.ctx) return
     const now = this.ctx.currentTime
     const RAMP = 0.05
+    const blend = this.effectiveBlend()
     if (this.wetGainA) {
       const g = this.wetGainA.gain
       g.cancelScheduledValues(now)
       g.setValueAtTime(g.value, now)
-      g.linearRampToValueAtTime(this.irMix * this.irMakeupA * (1 - this.irBlend), now + RAMP)
+      g.linearRampToValueAtTime(this.irMix * this.irMakeupA * (1 - blend), now + RAMP)
     }
     if (this.wetGainB) {
       const g = this.wetGainB.gain
       g.cancelScheduledValues(now)
       g.setValueAtTime(g.value, now)
-      g.linearRampToValueAtTime(this.irMix * this.irMakeupB * this.irBlend, now + RAMP)
+      g.linearRampToValueAtTime(this.irMix * this.irMakeupB * blend, now + RAMP)
     }
   }
 
@@ -2531,16 +2760,20 @@ export class LiveEngine {
     if (!this.splitter || !this.worklet || !this.inputAnalyser) return
     const next = Math.min(Math.max(0, channel), this.channelAnalysers.length - 1)
     if (next === this.inputChannel) return
-    try {
-      if (this.gate) this.splitter.disconnect(this.gate)
-      else this.splitter.disconnect(this.worklet)
-      this.splitter.disconnect(this.inputAnalyser)
-    } catch {
-      // Not connected yet.
+    // Whatever start() actually wired the splitter into: the gate, else the pedal stage, else the
+    // amp. Assuming "gate or amp" broke a pedal rig whose gate failed to load — the old channel
+    // stayed on the pedal and the new one went straight into the amp, both at once.
+    const chainInput: AudioNode = this.gate ?? this.preWorklet ?? this.worklet
+    // Separate tries: one missing edge used to skip the tuner tap's disconnect, summing inputs.
+    for (const node of [chainInput, this.inputAnalyser]) {
+      try {
+        this.splitter.disconnect(node)
+      } catch {
+        // Not connected yet.
+      }
     }
     this.inputChannel = next
-    if (this.gate) this.splitter.connect(this.gate, next, 0)
-    else this.splitter.connect(this.worklet, next, 0)
+    this.splitter.connect(chainInput, next, 0)
     this.splitter.connect(this.inputAnalyser, next, 0)
   }
 
@@ -2623,6 +2856,10 @@ export class LiveEngine {
   }
 
   async stop(): Promise<void> {
+    this.lifecycle++
+    this.cabinetBuild++
+    this.delayIrLoad++
+    this.reverbIrLoad++
     if (this.echoLabDuckTimerId) {
       clearInterval(this.echoLabDuckTimerId)
       this.echoLabDuckTimerId = null
@@ -2715,6 +2952,9 @@ export class LiveEngine {
       this.wetGainB,
       this.dryGain,
       this.outputGain,
+      this.dcBlocker,
+      this.limiter,
+      this.ceiling,
       this.analyser,
       this.inputAnalyser
     ]) {
@@ -2744,6 +2984,9 @@ export class LiveEngine {
     this.irBlend = 0
     this.dryGain = null
     this.outputGain = null
+    this.dcBlocker = null
+    this.limiter = null
+    this.ceiling = null
     this.analyser = null
     this.inputAnalyser = null
     this.irMix = 1
