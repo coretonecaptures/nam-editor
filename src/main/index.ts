@@ -994,6 +994,10 @@ async function handleCompanionAction(action: string, body: unknown): Promise<{ o
     const historyId = typeof (body as { historyId?: unknown })?.historyId === 'string' ? (body as { historyId: string }).historyId : ''
     const entry = trainerHistory.find((item) => item.historyId === historyId)
     if (!entry) return { ok: false, error: 'Training history entry not found.' }
+    if (entry.sourceMode === 'nam-capture-import') {
+      const result = await retryNamCaptureHistory([entry], `Retry - ${entry.finalModelName || 'capture'}`)
+      return result.success ? { ok: true, data: { queued: result.queued } } : { ok: false, error: result.error ?? 'That retry did not add a new queue item.' }
+    }
     if (!entry.profileId) return { ok: false, error: 'Only profile-backed runs can be retried from mobile right now.' }
     const profile = trainingProfiles.find((item) => item.id === entry.profileId)
     if (!trainerConfiguredPythonPath || !trainerConfiguredInputPath) {
@@ -1015,7 +1019,9 @@ async function handleCompanionAction(action: string, body: unknown): Promise<{ o
         trainerConfiguredInputPath,
         [sourcePath],
         entry.sourceMode,
-        submissionMeta
+        submissionMeta,
+        undefined,
+        { explicitRetry: true }
       )).filter((payload) => payload.architecture === entry.architecture)
       : [buildTrainerPayloadFromHistoryEntryFallback(entry, trainerConfiguredPythonPath, trainerConfiguredInputPath, sourcePath, submissionMeta)]
     if (payloads.length === 0) return { ok: false, error: 'That history entry could not be re-queued.' }
@@ -1236,7 +1242,8 @@ function startCompanionBridgeServer(): void {
 }
 
 type TrainerArchitecture = string
-type TrainerQueueJobStatus = 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
+// 'staged' matches src/shared/trainer.ts — this local copy was missing it, though staged jobs are used throughout.
+type TrainerQueueJobStatus = 'staged' | 'queued' | 'starting' | 'running' | 'success' | 'error' | 'canceled'
 
 interface WaveNetLayerConfig {
   input_size: number
@@ -1730,8 +1737,16 @@ faulthandler.enable(file=sys.stderr, all_threads=True)
 import matplotlib
 matplotlib.use("Agg")
 
+import time
+
 import numpy as np
 import soundfile as sf
+
+# When this attempt started. A retry reuses the same workspace, so files from an earlier attempt
+# are still there; only .nam files written since now can be this run's result.
+_RUN_STARTED_AT = time.time()
+# Filesystem mtime granularity (FAT/SMB can be 2s), so a file written right at start still counts.
+_MTIME_SLACK_S = 2.0
 
 from nam.train.core import train
 
@@ -1852,26 +1867,35 @@ def _extract_validation_esr(result):
         return None
 
 
+def _is_fresh(path):
+    try:
+        return path.stat().st_mtime >= _RUN_STARTED_AT - _MTIME_SLACK_S
+    except OSError:
+        return False
+
+
 def _find_output_model_path(train_path, model_name):
+    """The .nam THIS attempt produced. Anything older is a previous attempt's leftover in a
+    reused retry workspace — accepting it used to promote the old model as the new result."""
     root = Path(train_path)
 
     direct = root / f"{model_name}.nam"
-    if direct.exists():
+    if direct.exists() and _is_fresh(direct):
         return str(direct)
 
     # Scan workspace recursively for any .nam file NAM may have put in a subdirectory.
     candidates = []
     if root.exists():
-        candidates = list(root.rglob("*.nam"))
+        candidates = [p for p in root.rglob("*.nam") if _is_fresh(p)]
 
     # Also check CWD — some NAM versions write to the current working directory.
     if not candidates:
         cwd = Path.cwd()
         if cwd.resolve() != root.resolve():
             cwd_direct = cwd / f"{model_name}.nam"
-            if cwd_direct.exists():
+            if cwd_direct.exists() and _is_fresh(cwd_direct):
                 return str(cwd_direct)
-            candidates = list(cwd.glob("*.nam"))
+            candidates = [p for p in cwd.glob("*.nam") if _is_fresh(p)]
 
     if not candidates:
         return str(direct)  # Caller (_promote_output_model_path) will raise if this doesn't exist.
@@ -2071,7 +2095,11 @@ def _run_a1_v13(payload):
 def _run_a2(payload):
     """A2 PackedWaveNet training for NAM >= 0.13.0.
     core.train() loads config_model_packed.json internally — no config injection needed.
-    Produces a SlimmableContainer .nam with channels_3 (lite) + channels_8 (standard)."""
+    Produces a SlimmableContainer .nam with channels_3 (lite) + channels_8 (standard).
+
+    Deliberately does NOT apply the payload's lr / lrDecay / fitMrstft: every builder fills those
+    with NAM Lab's A1 defaults, so injecting them would move every A2 run off the official
+    packed config's tuning. The queue editor hides those controls for A2 instead."""
     return train(
         input_path=payload["inputPath"],
         output_path=payload["outputPath"],
@@ -3735,8 +3763,23 @@ function trainerHistoryAlreadyHasSource(profileId: string | null, sourcePath: st
     normalizePath(entry.sourcePath) === normalized &&
     entry.profileId === profileId &&
     entry.architecture === architecture &&
-    entry.sourceMtimeMs === mtimeMs &&
-    entry.sourceSizeBytes === sizeBytes
+    (
+      (entry.sourceMtimeMs === mtimeMs && entry.sourceSizeBytes === sizeBytes) ||
+      // Older manual skips were stored with no fingerprint, so they never matched a real file
+      // and the watcher queued it anyway. Treat a fingerprint-less skip as path-scoped.
+      (entry.sourceMtimeMs == null && entry.sourceSizeBytes == null)
+    )
+  )
+}
+
+/** Any job for this source that is still going to run — what an explicit retry must not duplicate. */
+function trainerQueueHasActiveSource(profileId: string | null, sourcePath: string, architecture: TrainerArchitecture): boolean {
+  const normalized = normalizePath(sourcePath)
+  return trainerQueue.some((job) =>
+    normalizePath(job.outputPath) === normalized &&
+    job.architecture === architecture &&
+    job.profileId === profileId &&
+    !isTrainerQueueTerminalStatus(job.status)
   )
 }
 
@@ -3757,7 +3800,13 @@ async function buildTrainerPayloadsForProfile(
   sourceWavPaths: string[],
   sourceModeOverride?: TrainingSourceMode,
   submissionMeta?: { id: string; label: string; createdAt: string },
-  normalizeOverride?: { normalizeWav: boolean; normalizeWavTargetDb: number }
+  normalizeOverride?: { normalizeWav: boolean; normalizeWavTargetDb: number },
+  /**
+   * An explicit, user-requested retry of these exact files. The watcher's dedup (a successful
+   * history row, or any retained queue row including failures) is what blocked it: a retry of
+   * something that already ran is the point. Only work still pending is treated as a duplicate.
+   */
+  options?: { explicitRetry?: boolean }
 ): Promise<TrainerStartPayload[]> {
   const payloads: TrainerStartPayload[] = []
   if (!pythonPath.trim()) { log(`[payload builder "${profile.name}"] skipped: python path empty`); return payloads }
@@ -3775,8 +3824,12 @@ async function buildTrainerPayloadsForProfile(
       continue
     }
     for (const architecture of profile.architectures) {
-      if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] already in queue: "${outputPath}" / ${architecture}`); continue }
-      if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) { log(`[payload builder "${profile.name}"] already in history/skipped: "${outputPath}" / ${architecture}`); continue }
+      if (options?.explicitRetry) {
+        if (trainerQueueHasActiveSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] retry skipped, still pending: "${outputPath}" / ${architecture}`); continue }
+      } else {
+        if (trainerQueueAlreadyHasSource(profile.id, normalizedOutputPath, architecture)) { log(`[payload builder "${profile.name}"] already in queue: "${outputPath}" / ${architecture}`); continue }
+        if (trainerHistoryAlreadyHasSource(profile.id, normalizedOutputPath, architecture, sourceStats.mtimeMs, sourceStats.sizeBytes)) { log(`[payload builder "${profile.name}"] already in history/skipped: "${outputPath}" / ${architecture}`); continue }
+      }
       const isA2 = architecture === 'a2'
       const profileCfg = isA2 ? null : lookupCaptureProfileConfig(architecture, trainerUserCaptureProfiles)
       const graphFormula = profile.effectiveGraphFormula?.trim() ?? ''
@@ -4125,7 +4178,30 @@ function stopCheckpointPoll(): void {
   }
 }
 
+/**
+ * A stop requested while a job is still in preflight (file checks, workspace and payload setup),
+ * before any child process exists to kill. Emergency Stop and Batch Cancel both used to require a
+ * child, so a stop during slow or network I/O was rejected — and the job went on to train.
+ */
+let trainerPreflightAbort: { jobId: string; mode: 'requeue' | 'cancel' } | null = null
+
+class TrainerPreflightAborted extends Error {
+  constructor(readonly mode: 'requeue' | 'cancel') {
+    super(mode === 'requeue' ? 'Stopped before training started.' : 'Batch canceled.')
+    this.name = 'TrainerPreflightAborted'
+  }
+}
+
 async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
+  if (trainerPreflightAbort?.jobId === job.jobId) trainerPreflightAbort = null
+  let writtenPayloadPath: string | null = null
+  const checkPreflightAbort = async (): Promise<void> => {
+    const abort = trainerPreflightAbort
+    if (!abort || abort.jobId !== job.jobId) return
+    trainerPreflightAbort = null
+    if (writtenPayloadPath) await fs.promises.unlink(writtenPayloadPath).catch(() => undefined)
+    throw new TrainerPreflightAborted(abort.mode)
+  }
   const pythonPath = job.pythonPath
   const inputPath = job.inputPath
   const outputPath = job.outputPath
@@ -4194,8 +4270,11 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   emitTrainerState()
 
   await fs.promises.access(pythonPath)
+  await checkPreflightAbort()
   await fs.promises.access(inputPath)
+  await checkPreflightAbort()
   await fs.promises.access(outputPath)
+  await checkPreflightAbort()
   try {
     const outputStat = await fs.promises.stat(outputPath)
     updateTrainerJob(job.jobId, {
@@ -4206,10 +4285,12 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     /* best effort */
   }
   await fs.promises.mkdir(trainPath, { recursive: true })
+  await checkPreflightAbort()
 
   const runnerPath = await ensureTrainerRunnerScript()
   const payloadDir = join(app.getPath('userData'), 'trainer')
   await fs.promises.mkdir(payloadDir, { recursive: true })
+  await checkPreflightAbort()
   const payloadPath = join(payloadDir, `run-${runId}.json`)
   const runnerPayload = {
     inputPath,
@@ -4244,6 +4325,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
     outputLevelDbu: job.outputLevelDbu ?? null,
   }
   await fs.promises.writeFile(payloadPath, JSON.stringify(runnerPayload, null, 2), 'utf-8')
+  writtenPayloadPath = payloadPath
+  await checkPreflightAbort()
 
   // Build a clean environment: start from process.env but strip Electron-specific variables
   // that can confuse Python's native extensions (PyTorch, CUDA DLLs) when inherited.
@@ -4264,6 +4347,8 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
   }
 
   const { spawn } = await import('child_process')
+  // Last chance: past this point there is a child to kill, and the normal cancel paths apply.
+  await checkPreflightAbort()
   trainerChild = spawn(pythonPath, ['-u', runnerPath, payloadPath], {
     cwd: trainPath,
     // On Windows, windowsHide:true gives the subprocess null console handles.
@@ -4348,7 +4433,9 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
             : job
         ))
       }
-      // Clean up the partial workspace for the killed run so the retry starts fresh.
+      // Only the payload file is removed; the workspace is kept (it may hold earlier attempts'
+      // graphs/checkpoints). That's safe because output selection only accepts .nam files
+      // written after the next attempt starts — see _find_output_model_path / isFreshForAttempt.
       try { await fs.promises.unlink(payloadPath) } catch { /* ignore */ }
       trainerEmergencyRequeueJobId = null
       trainerState = {
@@ -4435,6 +4522,13 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
         pushCandidate(join(job.trainPath, `${job.modelName}.nam`))
 
         const workspaceNams = await findFilesRecursive(job.trainPath, (p) => /\.nam$/i.test(p))
+        // Same freshness rule as the runner's finder: a retry reuses the workspace, so an older
+        // attempt's .nam is still here and must not be promoted as this run's result.
+        const attemptStartedMs = Date.parse(trainerState.startedAt ?? '') || 0
+        const isFreshForAttempt = async (p: string): Promise<boolean> => {
+          const st = await fs.promises.stat(p).catch(() => null)
+          return !!st && st.mtimeMs >= attemptStartedMs - 2000
+        }
         if (workspaceNams.length > 0) {
           const scored = await Promise.all(workspaceNams.map(async (p) => {
             const st = await fs.promises.stat(p).catch(() => null)
@@ -4463,6 +4557,10 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
           const sourceExists = await fs.promises.access(sourceModelPath).then(() => true).catch(() => false)
           if (!sourceExists) {
             attempted.push(`${sourceModelPath} (missing)`)
+            continue
+          }
+          if (!(await isFreshForAttempt(sourceModelPath))) {
+            attempted.push(`${sourceModelPath} (left over from an earlier attempt)`)
             continue
           }
           try {
@@ -4724,6 +4822,10 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
   try {
     await startTrainerJob(nextJob)
   } catch (error) {
+    if (error instanceof TrainerPreflightAborted) {
+      await handleTrainerPreflightAbort(nextJob, error.mode)
+      return
+    }
     const failureReason = String(error)
     updateTrainerJob(nextJob.jobId, {
       status: 'error',
@@ -4760,6 +4862,31 @@ async function pumpTrainerQueue(preferSubmissionId?: string | null): Promise<voi
     emitTrainerState()
     persistTrainerQueueThrottled()
   }
+}
+
+/** Finish a job stopped during preflight: the same outcomes Emergency Stop / Batch Cancel give a running one. */
+async function handleTrainerPreflightAbort(job: TrainerQueueJob, mode: 'requeue' | 'cancel'): Promise<void> {
+  if (mode === 'requeue') {
+    // Emergency Stop: back to the front of the queue, queue paused until Resume.
+    trainerQueue = trainerQueue.map((queued) => (queued.jobId === job.jobId ? resetTrainerJobForQueue(queued) : queued))
+    trainerPauseAfterCurrent = true
+    trainerState = {
+      ...TRAINER_IDLE_STATE,
+      queue: trainerQueue,
+      pauseAfterCurrent: trainerPauseAfterCurrent,
+      progressPhase: 'Stopped — queue paused',
+    }
+    emitTrainerState()
+    persistTrainerQueueThrottled()
+    return
+  }
+  const canceledAt = new Date().toISOString()
+  updateTrainerJob(job.jobId, { status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' })
+  appendTrainerCanceledHistory(trainerQueue.find((queued) => queued.jobId === job.jobId) ?? job, 'Batch canceled.')
+  trainerState = { ...TRAINER_IDLE_STATE, queue: trainerQueue, pauseAfterCurrent: trainerPauseAfterCurrent }
+  emitTrainerState()
+  if (pruneFinishedBatchesFromQueue()) emitTrainerState()
+  if (!trainerPauseAfterCurrent) await pumpTrainerQueue()
 }
 
 async function scanWavFilesInFolder(folderPath: string): Promise<string[]> {
@@ -4850,9 +4977,15 @@ async function ensureTrainingWatcherAutoStart(profile: TrainingProfile): Promise
 function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string): void {
   const countKey = profile.id
   const timerKey = makeTrainingWatcherTimerKey(profile.id, filePath)
+  // One pending count per FILE, not per schedule: replacing a pending timer used to add another
+  // count whose matching decrement never ran (the replaced callback was cancelled), so the
+  // pending figure only ever grew.
+  const alreadyPending = trainingWatcherPendingTimers.has(timerKey)
   clearTrainingWatcherTimer(timerKey)
-  trainingWatcherPendingCounts.set(countKey, (trainingWatcherPendingCounts.get(countKey) ?? 0) + 1)
-  emitTrainerState()
+  if (!alreadyPending) {
+    trainingWatcherPendingCounts.set(countKey, (trainingWatcherPendingCounts.get(countKey) ?? 0) + 1)
+    emitTrainerState()
+  }
   const timer = setTimeout(async () => {
     try {
       if (!fs.existsSync(filePath)) return
@@ -4860,9 +4993,16 @@ function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string)
       await wait(1200)
       const second = await statTrainingSource(filePath)
       if (first.sizeBytes !== second.sizeBytes || first.mtimeMs !== second.mtimeMs) {
+        // Still being written. The finally below must leave this replacement alone — it used to
+        // clear "the timer for this key", which by then WAS this replacement, so a file still
+        // copying when first seen was never queued unless another fs.watch event happened along.
         scheduleTrainingWatcherFile(profile, filePath)
         return
       }
+      // The profile may have been disabled or edited while we waited; use what's current.
+      const current = trainingProfiles.find((candidate) => candidate.id === profile.id)
+      if (!current || !isTrainingProfileActive(current)) return
+      profile = current
       const payloads = await buildTrainerPayloadsForProfile(
         profile,
         trainerConfiguredPythonPath,
@@ -4880,9 +5020,13 @@ function scheduleTrainingWatcherFile(profile: TrainingProfile, filePath: string)
     } catch (error) {
       log(`training watcher enqueue failed for ${filePath}: ${String(error)}`)
     } finally {
-      trainingWatcherPendingCounts.set(countKey, Math.max(0, (trainingWatcherPendingCounts.get(countKey) ?? 1) - 1))
-      clearTrainingWatcherTimer(timerKey)
-      emitTrainerState()
+      // Only if no newer timer took over this file (a reschedule above, or a later fs.watch
+      // event while this one was mid-await) — that one owns the count and the map entry now.
+      if (trainingWatcherPendingTimers.get(timerKey) === timer) {
+        trainingWatcherPendingTimers.delete(timerKey)
+        trainingWatcherPendingCounts.set(countKey, Math.max(0, (trainingWatcherPendingCounts.get(countKey) ?? 1) - 1))
+        emitTrainerState()
+      }
     }
   }, 1200)
   trainingWatcherPendingTimers.set(timerKey, timer)
@@ -8250,6 +8394,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('trainer:getState', async () => ({ ...trainerState, history: trainerHistory }))
 
   ipcMain.handle('trainer:cancel', async () => {
+    // Still in preflight: no child to kill yet, so flag it and let startTrainerJob stop itself
+    // at its next checkpoint (it requeues the job and pauses, as a stop of a running job does).
+    if (!trainerChild && trainerState.status === 'starting' && trainerState.activeJobId) {
+      trainerPreflightAbort = { jobId: trainerState.activeJobId, mode: 'requeue' }
+      trainerPauseAfterCurrent = true
+      trainerState = { ...trainerState, progressPhase: 'Stopping…', pauseAfterCurrent: true }
+      emitTrainerState()
+      return { success: true }
+    }
     if (!trainerChild || trainerState.status !== 'running' && trainerState.status !== 'starting') {
       return { success: false, error: 'No training run is currently active.' }
     }
@@ -8479,10 +8632,22 @@ app.whenReady().then(async () => {
         const normFile = normalizePath(filePath)
         const activeJob = activeJobId ? trainerQueue.find((j) => j.jobId === activeJobId) : null
         if (activeJob && normalizePath(activeJob.outputPath) === normFile && activeJob.profileId === profileId && activeJob.architecture === arch) return { architecture: arch, status: 'running' as const }
-        if (trainerQueue.some((j) => normalizePath(j.outputPath) === normFile && j.profileId === profileId && j.architecture === arch && j.status === 'queued')) return { architecture: arch, status: 'queued' as const }
-        if (trainerSkipped.some((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch)) return { architecture: arch, status: 'skipped' as const }
-        const hist = trainerHistory.find((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch)
-        if (hist) return { architecture: arch, status: hist.status as 'done' | 'failed' | 'canceled' | 'skipped' }
+        if (trainerQueue.some((j) => normalizePath(j.outputPath) === normFile && j.profileId === profileId && j.architecture === arch && (j.status === 'queued' || j.status === 'staged'))) return { architecture: arch, status: 'queued' as const }
+        // Same identity rule as the watcher's own dedup: a result describes THIS file only when
+        // the fingerprint matches (or the row predates fingerprints). Otherwise an old result
+        // labelled a replaced WAV — "Done" next to a file that had never been trained.
+        const sameFile = (e: { sourceSizeBytes: number | null; sourceMtimeMs: number | null }) =>
+          (e.sourceSizeBytes == null && e.sourceMtimeMs == null) || (e.sourceSizeBytes === sizeBytes && e.sourceMtimeMs === mtimeMs)
+        if (trainerSkipped.some((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch && sameFile(e))) return { architecture: arch, status: 'skipped' as const }
+        const hist = trainerHistory
+          .filter((e) => normalizePath(e.sourcePath) === normFile && e.profileId === profileId && e.architecture === arch && sameFile(e))
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]
+        // History speaks success/error; the modal's vocabulary is done/failed. A cast doesn't
+        // translate strings, so those rows rendered with no label and no style.
+        if (hist) {
+          const status = hist.status === 'success' ? 'done' : hist.status === 'error' ? 'failed' : hist.status
+          return { architecture: arch, status: status as 'done' | 'failed' | 'canceled' | 'skipped' }
+        }
         return { architecture: arch, status: 'pending' as const }
       })
       return { filePath, fileName: basename(filePath), sizeBytes, mtimeMs, statuses }
@@ -8499,7 +8664,7 @@ app.whenReady().then(async () => {
     saveTrainerSkipped()
     saveTrainerHistory()
     emitTrainerHistory()
-    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
+    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() }, undefined, { explicitRetry: true })
     if (payloads.length > 0) {
       await enqueueTrainingPayloads(payloads)
       await ensureTrainingWatcherAutoStart(profile)
@@ -8514,9 +8679,14 @@ app.whenReady().then(async () => {
     const norm = normalizePath(filePath)
 
     if (action === 'mark-skipped') {
+      // Fingerprinted, so the skip covers THIS file: the watcher's dedup compares size+mtime, and
+      // a skip stored without them never matched, so "skipped" files were queued anyway. A later
+      // re-capture written to the same path is a different file and is not skipped.
+      const fingerprint = await statTrainingSource(filePath).catch(() => null)
       for (const arch of profile.architectures) {
-        if (!trainerSkipped.some((e) => e.profileId === profileId && normalizePath(e.sourcePath) === norm && e.architecture === arch)) {
-          appendTrainerSkipped({ skipId: crypto.randomUUID(), profileId, profileName: profile.name, sourcePath: filePath, architecture: arch as TrainerArchitecture, sourceSizeBytes: null, sourceMtimeMs: null, skippedAt: new Date().toISOString(), reason: 'manually skipped' })
+        if (!trainerSkipped.some((e) => e.profileId === profileId && normalizePath(e.sourcePath) === norm && e.architecture === arch &&
+          e.sourceSizeBytes === (fingerprint?.sizeBytes ?? null) && e.sourceMtimeMs === (fingerprint?.mtimeMs ?? null))) {
+          appendTrainerSkipped({ skipId: crypto.randomUUID(), profileId, profileName: profile.name, sourcePath: filePath, architecture: arch as TrainerArchitecture, sourceSizeBytes: fingerprint?.sizeBytes ?? null, sourceMtimeMs: fingerprint?.mtimeMs ?? null, skippedAt: new Date().toISOString(), reason: 'manually skipped' })
         }
       }
       trainerQueue = trainerQueue.filter((j) => !(j.profileId === profileId && normalizePath(j.outputPath) === norm && j.status === 'queued'))
@@ -8538,7 +8708,7 @@ app.whenReady().then(async () => {
     saveTrainerHistory()
     emitTrainerHistory()
 
-    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() })
+    const payloads = await buildTrainerPayloadsForProfile(profile, trainerConfiguredPythonPath, trainerConfiguredInputPath, [filePath], 'watcher', { id: crypto.randomUUID(), label: `Watcher - ${profile.name}`, createdAt: new Date().toISOString() }, undefined, { explicitRetry: true })
 
     if (action === 'retrain-new') {
       for (const payload of payloads) {
@@ -8666,10 +8836,25 @@ app.whenReady().then(async () => {
     return { success: true, removed }
   })
 
+  // The explicit "Clear finished" button. It used to call the AUTOMATIC prune, which deliberately
+  // keeps any batch with a failure in it — so a fully failed batch was counted as clearable, the
+  // button reported success, and the rows stayed. This applies exactly the rule the button counts
+  // by (TrainingPanel's clearableFinishedCount): terminal rows of batches with nothing left to run.
   ipcMain.handle('trainer:clearFinished', async () => {
-    pruneFinishedBatchesFromQueue()
+    const activeId = trainerState.activeJobId
+    const allTerminal = new Map<string, boolean>()
+    for (const job of trainerQueue) {
+      if (!job.submissionId || job.status === 'staged') continue
+      allTerminal.set(job.submissionId, (allTerminal.get(job.submissionId) ?? true) && isTrainerQueueTerminalStatus(job.status))
+    }
+    const before = trainerQueue.length
+    trainerQueue = trainerQueue.filter((job) =>
+      job.jobId === activeId ||
+      !isTrainerQueueTerminalStatus(job.status) ||
+      (!!job.submissionId && allTerminal.get(job.submissionId) !== true)
+    )
     emitTrainerState()
-    return { success: true }
+    return { success: true, removed: before - trainerQueue.length }
   })
 
   // Permanently remove ALL watcher-sourced jobs from the queue and mark each one's source file as
@@ -8843,14 +9028,26 @@ app.whenReady().then(async () => {
     const activeIsInBatch = trainerState.activeJobId != null &&
       trainerQueue.find(j => j.jobId === trainerState.activeJobId)?.submissionId === submissionId
     // Cancel all queued/staged jobs in this submission
+    const canceledPending: TrainerQueueJob[] = []
     trainerQueue = trainerQueue.map((job) => {
       if (job.submissionId !== submissionId) return job
       if (job.status === 'queued' || job.status === 'staged') {
         found = true
-        return { ...job, status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' }
+        const canceled: TrainerQueueJob = { ...job, status: 'canceled', finishedAt: canceledAt, error: 'Batch canceled.' }
+        canceledPending.push(canceled)
+        return canceled
       }
       return job
     })
+    // Record them: only a RUNNING job's finalizer wrote history, so a batch canceled before it
+    // started left no trace once its queue rows were dismissed. The active job (if any) is not
+    // in this list — its own finalizer records it.
+    for (const job of canceledPending) appendTrainerCanceledHistory(job, 'Batch canceled before it started.')
+    // Active job still in preflight: no child yet, so have startTrainerJob cancel itself.
+    if (activeIsInBatch && !trainerChild && trainerState.status === 'starting' && trainerState.activeJobId) {
+      found = true
+      trainerPreflightAbort = { jobId: trainerState.activeJobId, mode: 'cancel' }
+    }
     // Also kill the active run if it belongs to this submission
     if (activeIsInBatch && trainerChild && (trainerState.status === 'running' || trainerState.status === 'starting')) {
       found = true
@@ -8927,11 +9124,18 @@ app.whenReady().then(async () => {
         // Label change applies to all jobs in the submission (so the header always shows the new name).
         // Settings changes (epochs, ESR, LR, input DI) and editedAt apply only to queued jobs.
         const isEditable = job.status === 'queued' || job.status === 'staged'
-        const settingsUpdate = isEditable && hasSettingsChange ? {
+        // A2 trains from NAM's own packed config, which the runner doesn't override, so an LR
+        // edit would be stored and shown as "edited" while changing nothing. Leave A2 jobs alone;
+        // the editor says so.
+        const isA2 = job.namMode === 'a2'
+        const jobHasSettingsChange = isA2
+          ? typeof changes.epochs === 'number' || changes.thresholdEsr !== undefined || typeof changes.inputPath === 'string'
+          : hasSettingsChange
+        const settingsUpdate = isEditable && jobHasSettingsChange ? {
           ...(typeof changes.epochs === 'number' ? { epochs: changes.epochs, progressEpochTotal: changes.epochs } : {}),
           ...(changes.thresholdEsr !== undefined ? { thresholdEsr: changes.thresholdEsr } : {}),
-          ...(typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
-          ...(typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
+          ...(!isA2 && typeof changes.lr === 'number' ? { lr: changes.lr } : {}),
+          ...(!isA2 && typeof changes.lrDecay === 'number' ? { lrDecay: changes.lrDecay } : {}),
           ...(typeof changes.inputPath === 'string' ? { inputPath: changes.inputPath } : {}),
           editedAt: now,
         } : {}
@@ -8974,7 +9178,9 @@ app.whenReady().then(async () => {
         trainerConfiguredInputPath,
         [sourcePath],
         entry.sourceMode,
-        submissionMeta
+        submissionMeta,
+        undefined,
+        { explicitRetry: true }
       )).filter((payload) => payload.architecture === entry.architecture)
       : [buildTrainerPayloadFromHistoryEntryFallback(entry, trainerConfiguredPythonPath, trainerConfiguredInputPath, sourcePath, submissionMeta)]
     if (payloads.length === 0) {

@@ -5150,10 +5150,24 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 }}
               />
             </div>
+            {(() => {
+              // A2 trains from NAM's own packed config; LR / LR decay are never applied to it
+              // (see _run_a2), so an all-A2 batch gets an explanation instead of dead controls.
+              const editable = trainerState.queue.filter((j) =>
+                j.submissionId === editBatchModal.submissionId && (j.status === 'queued' || j.status === 'staged'))
+              const a2Count = editable.filter((j) => j.namMode === 'a2').length
+              if (editable.length > 0 && a2Count === editable.length) {
+                return (
+                  <p className="text-[11px] text-nm-text-3">
+                    LR and LR decay don't apply to A2 — it trains from NAM's own packed model config.
+                  </p>
+                )
+              }
+              return (
             <details className="group">
               <summary className="text-[11px] font-[600] text-nm-text-3 cursor-pointer select-none list-none flex items-center gap-1">
                 <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
-                Advanced (LR / LR decay)
+                Advanced (LR / LR decay){a2Count > 0 ? ' — A1 captures only' : ''}
               </summary>
               <div className="mt-3 space-y-3">
                 <div>
@@ -5180,6 +5194,8 @@ export function TrainingPanel({ settings, onSaveSettings, onClose, initialRunMod
                 </div>
               </div>
             </details>
+              )
+            })()}
           </div>
           <div className="px-5 pb-4 flex justify-end gap-2">
             <button
