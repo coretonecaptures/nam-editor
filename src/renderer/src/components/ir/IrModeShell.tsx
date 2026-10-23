@@ -747,7 +747,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
     setSendingPlayCab(true)
     try {
       const result = await window.api.irLibrarySendPlayCabToIrLab([...selectedIds])
-      setImportResult(result.success ? 'Loaded in IR Lab.' : result.reason ?? 'Failed to load in IR Lab.')
+      setImportResult(result.success ? 'Loaded in Core Tone Lab.' : result.reason ?? 'Failed to load in Core Tone Lab.')
     } finally {
       setSendingPlayCab(false)
     }
@@ -1748,7 +1748,8 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
           const availability = describeIrLabAvailability(
             connectorAvailable,
             irLabStatus,
-            'Load the selection into Live Audition’s Cab A/B slots'
+            'Load the selection into Live Audition’s Cab A/B slots',
+            'Core Tone Lab'
           )
           return (
             <button
@@ -1757,7 +1758,7 @@ export function IrModeShell({ leftRail }: { leftRail?: React.ReactNode } = {}): 
               className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov disabled:opacity-40"
               title={countOk ? availability.tooltip : 'Select 1-4 IRs (Ctrl/Cmd-click) — 1-2 fill Cab A/B, 3-4 also fill a stereo rig’s second lane'}
             >
-              {sendingPlayCab ? 'Loading…' : 'Play in IR Lab'}
+              {sendingPlayCab ? 'Loading…' : 'Play in Core Tone Lab'}
             </button>
           )
         })()}

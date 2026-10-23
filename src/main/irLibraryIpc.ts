@@ -613,14 +613,14 @@ export function registerIrLibraryIpc(getMainWindow: () => BrowserWindow | null):
   ipcMain.handle('irLibrary:sendPlayCabToIrLab', async (_event, itemIds: string[]) => {
     if (itemIds.length === 0) return { success: false, reason: 'No items selected.' }
     if (itemIds.length > 4) {
-      return { success: false, reason: 'Play in IR Lab takes at most 4 IRs (1-2 for a normal rig, up to 4 for a stereo rig).' }
+      return { success: false, reason: 'Play in Core Tone Lab takes at most 4 IRs (1-2 for a normal rig, up to 4 for a stereo rig).' }
     }
     const irLabStatus = readIrLabStatus()
     if (!irLabStatus.installed) {
-      return { success: false, reason: 'IR Lab has not been run on this computer yet. Install and open IR Lab once, then try again.' }
+      return { success: false, reason: 'Core Tone Lab has not been opened on this computer yet. Install it, open it once, then try again.' }
     }
     if (!irLabSupportsRoute(irLabStatus, 'playcab')) {
-      return { success: false, reason: 'This version of IR Lab cannot receive Play in IR Lab. Update IR Lab, open it once, then try again.' }
+      return { success: false, reason: 'This version of Core Tone Lab cannot receive Play in Core Tone Lab. Update it, open it once, then try again.' }
     }
     const database = getDb()
     const placeholders = itemIds.map(() => '?').join(',')

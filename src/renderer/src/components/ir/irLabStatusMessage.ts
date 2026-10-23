@@ -22,15 +22,18 @@ export interface IrLabAvailability {
 export function describeIrLabAvailability(
   connectorAvailable: boolean,
   status: IrLabStatus | null,
-  actionLabel: string
+  actionLabel: string,
+  /** The name shown for the receiving app. "Play in Core Tone Lab" names it that way (2026-10-23);
+   * the other sends still say IR Lab. */
+  appName = 'IR Lab'
 ): IrLabAvailability {
   if (!connectorAvailable) {
-    return { disabled: true, tooltip: 'IR Lab connector not configured in this build' }
+    return { disabled: true, tooltip: `${appName} connector not configured in this build` }
   }
   if (!status || !status.installed) {
     return {
       disabled: false,
-      tooltip: "IR Lab hasn't reported running on this machine yet — install and launch it once, then try this."
+      tooltip: `${appName} hasn't reported running on this machine yet — install and launch it once, then try this.`
     }
   }
   if (status.licenseState === 'unlicensed') {
@@ -38,8 +41,8 @@ export function describeIrLabAvailability(
       status.trialDaysRemaining != null
         ? ` (${status.trialDaysRemaining} trial day${status.trialDaysRemaining === 1 ? '' : 's'} left)`
         : ''
-    return { disabled: false, tooltip: `${actionLabel} — IR Lab is unlicensed${trial}` }
+    return { disabled: false, tooltip: `${actionLabel} — ${appName} is unlicensed${trial}` }
   }
   const version = status.version ? ` (v${status.version})` : ''
-  return { disabled: false, tooltip: `${actionLabel} in IR Lab${version}` }
+  return { disabled: false, tooltip: `${actionLabel} in ${appName}${version}` }
 }
