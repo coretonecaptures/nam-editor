@@ -8,7 +8,7 @@ import { findOuterMetadataMatch, findMatchingBrace, serializeJsonValue, escapeRe
 import { registerIrLibraryIpc } from './irLibraryIpc'
 import { deleteWithFallback } from './trashFile'
 import { stopAllRootWatchers } from './irCatalog/irRootWatcher'
-import { writeNamLabResult, syncCaptureTrainingStatusFiles } from './irCatalog/namCaptureResult'
+import { writeNamLabResult, syncCaptureTrainingStatusFiles, copyModelIntoCaptureFolder } from './irCatalog/namCaptureResult'
 import { buildNamCaptureImportPayloads, findModelNameConflicts, sanitizeTrainerPathPart, type NamCaptureImportItem, type CaptureProfileConfig, portableCaptureFolder } from './namCaptureTraining'
 import { isAllowedLocalFilePath, localFileExtension } from './localFileGuard'
 import { parseNamLabUrl } from './namLabUrl'
@@ -4709,7 +4709,11 @@ async function startTrainerJob(job: TrainerQueueJob): Promise<void> {
       // Written AFTER the graph promote so graphPath is final. Best-effort — never fails the run.
       if (job.sourceMode === 'nam-capture-import' && job.outputPath && trainerState.outputModelPath) {
         try {
+          const resultArchitecture = job.namMode === 'a2' ? 'a2' : (job.architecture || 'a1')
+          // A copy inside the capture's own project, so the trained model travels with it.
+          const projectModelPath = copyModelIntoCaptureFolder(job.outputPath, trainerState.outputModelPath, resultArchitecture)
           writeNamLabResult(job.outputPath, {
+            projectModelPath,
             trainedAt: trainerState.finishedAt ?? new Date().toISOString(),
             modelName: job.modelName,
             // The real architecture id: with several in one preset, a1/a2 could not tell them apart.

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { createCoreSchema } from './schema'
 import { importLibrary } from './importLibrary'
 import { enrichNamCaptures, listNamProjects, getNamProjectDetail, getNamLibraryOverview, setNamCaptureMetadata, applyProjectDefaults, trainableInputLevelDbu } from './namCaptureEnrichment'
-import { writeNamLabResult, namLabResultPathFor, readNamLabResult, captureTrainingStates, syncCaptureTrainingStatusFiles, namLabStatusPathFor } from './namCaptureResult'
+import { writeNamLabResult, namLabResultPathFor, readNamLabResult, captureTrainingStates, syncCaptureTrainingStatusFiles, namLabStatusPathFor, copyModelIntoCaptureFolder } from './namCaptureResult'
 import { queryItems, countItems } from './queryLibrary'
 
 const tmpDirs: string[] = []
@@ -649,5 +649,32 @@ describe('training status for IR Lab (2026-10-23)', () => {
     syncCaptureTrainingStatusFiles([job('j1', 'success', rec)], written)
     expect(fs.existsSync(namLabStatusPathFor(rec))).toBe(false)
     expect(written.size).toBe(0)
+  })
+})
+
+describe('trained model inside the capture project (2026-10-23)', () => {
+  it('references a model already in the project, copies one from outside, and the result keeps the path', () => {
+    const project = makeTmpDir()
+    fs.mkdirSync(join(project, 'NAM Captures'))
+    fs.mkdirSync(join(project, 'Trained Models'))
+    const rec = join(project, 'NAM Captures', 'Clean.wav')
+    fs.writeFileSync(rec, 'wav')
+    const inside = join(project, 'Trained Models', 'Clean.nam')
+    fs.writeFileSync(inside, '{"model":1}')
+    expect(copyModelIntoCaptureFolder(rec, inside, 'standard')).toBe('../Trained Models/Clean.nam')
+    expect(fs.existsSync(join(project, 'Trained Models', 'standard'))).toBe(false) // not copied twice
+
+    const elsewhere = makeTmpDir()
+    const outside = join(elsewhere, 'Clean.nam')
+    fs.writeFileSync(outside, '{"model":2}')
+    const rel = copyModelIntoCaptureFolder(rec, outside, 'lite')
+    expect(rel).toBe('../Trained Models/lite/Clean.nam')
+    expect(fs.readFileSync(join(project, 'Trained Models', 'lite', 'Clean.nam'), 'utf8')).toBe('{"model":2}')
+
+    writeNamLabResult(rec, { trainedAt: 't', modelName: 'Clean', architecture: 'lite', validationEsr: 0.01, outputModelPath: outside,
+      trainerJobId: 'j', sourceCaptureId: 'c', projectModelPath: rel })
+    const r = readNamLabResult(rec)!
+    expect(r.projectModelPath).toBe('../Trained Models/lite/Clean.nam')
+    expect(r.models?.[0].projectModelPath).toBe('../Trained Models/lite/Clean.nam')
   })
 })

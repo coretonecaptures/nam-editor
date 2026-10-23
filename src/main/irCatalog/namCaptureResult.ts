@@ -17,7 +17,8 @@
  * without reaching into the (capped, pruned) trainer history.
  */
 import * as fs from 'node:fs'
-import { dirname, join, basename, extname } from 'node:path'
+import { createHash } from 'node:crypto'
+import { dirname, join, basename, extname, relative, resolve, isAbsolute } from 'node:path'
 
 export const NAM_LAB_RESULT_SUFFIX = '.nam-lab-result.json'
 export const NAM_LAB_RESULT_SCHEMA_VERSION = 2
@@ -42,6 +43,10 @@ export interface NamLabResult {
    * fields are the most recent one, which is all IR Lab reads; before this a preset that trains
    * several architectures left only the last to finish on record. Absent in older files. */
   models?: NamLabResultModel[]
+  /** The model inside the capture's own project, relative to the recording's folder ('/'-separated,
+   * e.g. "../Trained Models/Clean.nam"). Travels with the project, unlike outputModelPath. Null
+   * when no copy could be made. */
+  projectModelPath?: string | null
 }
 
 export interface NamLabResultModel {
@@ -51,6 +56,7 @@ export interface NamLabResultModel {
   validationEsr: number | null
   trainedAt: string
   trainerJobId: string
+  projectModelPath?: string | null
 }
 
 /** `<dir>/<CaptureName>.nam-lab-result.json` for a given recording WAV path. */
@@ -79,7 +85,8 @@ export function readNamLabResult(recordingWavPath: string): NamLabResult | null 
       graphPath: typeof parsed.graphPath === 'string' && parsed.graphPath ? parsed.graphPath : null,
       trainerJobId: parsed.trainerJobId ?? '',
       sourceCaptureId: typeof parsed.sourceCaptureId === 'string' && parsed.sourceCaptureId ? parsed.sourceCaptureId : null,
-      models: Array.isArray(parsed.models) ? parsed.models.filter(isModelEntry) : undefined
+      models: Array.isArray(parsed.models) ? parsed.models.filter(isModelEntry) : undefined,
+      projectModelPath: typeof parsed.projectModelPath === 'string' && parsed.projectModelPath ? parsed.projectModelPath : null
     }
   } catch {
     return null
@@ -106,8 +113,8 @@ function writeAtomically(path: string, text: string): void {
  * fail the training run that produced the model. */
 export function writeNamLabResult(
   recordingWavPath: string,
-  result: Omit<NamLabResult, 'schemaVersion' | 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId' | 'models'> &
-    Partial<Pick<NamLabResult, 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId'>>
+  result: Omit<NamLabResult, 'schemaVersion' | 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId' | 'models' | 'projectModelPath'> &
+    Partial<Pick<NamLabResult, 'validationEsrFull' | 'validationEsrLite' | 'graphPath' | 'sourceCaptureId' | 'projectModelPath'>>
 ): void {
   const previous = readNamLabResult(recordingWavPath)
   const sameCapture = previous != null && previous.sourceCaptureId === (result.sourceCaptureId ?? null)
@@ -124,7 +131,8 @@ export function writeNamLabResult(
     outputModelPath: result.outputModelPath,
     validationEsr: result.validationEsr,
     trainedAt: result.trainedAt,
-    trainerJobId: result.trainerJobId
+    trainerJobId: result.trainerJobId,
+    projectModelPath: result.projectModelPath ?? null
   }
   const payload: NamLabResult = {
     schemaVersion: NAM_LAB_RESULT_SCHEMA_VERSION,
@@ -239,5 +247,52 @@ export function syncCaptureTrainingStatusFiles(jobs: CaptureTrainingJob[], writt
     if (states.has(recording)) continue
     fs.rmSync(namLabStatusPathFor(recording), { force: true })
     written.delete(recording)
+  }
+}
+
+// ── The model's copy in the capture's project (2026-10-23) ──────────────────────────────────────
+
+function sha256Of(path: string): string {
+  return createHash('sha256').update(fs.readFileSync(path)).digest('hex')
+}
+
+/**
+ * Makes sure a trained model lives inside the capture's own project and returns where, relative to
+ * the recording's folder ('/'-separated, e.g. "../Trained Models/Clean.nam"), so it travels with the
+ * project. The project is the folder holding the recording's folder (IR Lab: <project>/NAM
+ * Captures/<capture>.wav). A model already inside it (the Train dialog's default output folder) is
+ * only referenced, never copied: a second copy would show twice in the library. One outside it is
+ * copied to <project>/Trained Models/<architecture>/<file>: temp file, SHA-256 checked against the
+ * source, then renamed, so a half copy never replaces a good one. Null when that fails
+ * (best-effort: the model itself is unaffected).
+ */
+export function copyModelIntoCaptureFolder(recordingWavPath: string, modelPath: string, architecture: string): string | null {
+  try {
+    const recordingFolder = dirname(recordingWavPath)
+    const projectRoot = dirname(recordingFolder)
+    const toPosix = (p: string): string => p.split(/[\\/]+/).join('/')
+    const real = (p: string): string => {
+      try {
+        return fs.realpathSync(p)
+      } catch {
+        return resolve(p)
+      }
+    }
+    const inside = relative(real(projectRoot), real(modelPath))
+    if (inside && !inside.startsWith('..') && !isAbsolute(inside)) return toPosix(relative(real(recordingFolder), real(modelPath)))
+
+    const folder = (architecture || 'model').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '') || 'model'
+    const target = join(projectRoot, 'Trained Models', folder, basename(modelPath))
+    fs.mkdirSync(dirname(target), { recursive: true })
+    const tmp = `${target}.${process.pid}.tmp`
+    fs.copyFileSync(modelPath, tmp)
+    if (sha256Of(tmp) !== sha256Of(modelPath)) {
+      fs.rmSync(tmp, { force: true })
+      return null
+    }
+    fs.renameSync(tmp, target)
+    return toPosix(relative(recordingFolder, target))
+  } catch {
+    return null
   }
 }

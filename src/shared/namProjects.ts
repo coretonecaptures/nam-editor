@@ -20,6 +20,9 @@ export interface NamLabResult {
    * fields are the most recent one, which is all IR Lab reads; before this a preset that trains
    * several architectures left only the last to finish on record. Absent in older files. */
   models?: NamLabResultModel[]
+  /** The model inside the capture's own project, relative to the recording's folder ('/'-separated,
+   * e.g. "../Trained Models/Clean.nam"). Travels with the project, unlike outputModelPath. */
+  projectModelPath?: string | null
 }
 
 export interface NamLabResultModel {
@@ -29,6 +32,7 @@ export interface NamLabResultModel {
   validationEsr: number | null
   trainedAt: string
   trainerJobId: string
+  projectModelPath?: string | null
 }
 
 export interface NamCaptureSuggestedMetadata {
