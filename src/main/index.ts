@@ -2097,9 +2097,12 @@ def _run_a2(payload):
     core.train() loads config_model_packed.json internally — no config injection needed.
     Produces a SlimmableContainer .nam with channels_3 (lite) + channels_8 (standard).
 
-    Deliberately does NOT apply the payload's lr / lrDecay / fitMrstft: every builder fills those
-    with NAM Lab's A1 defaults, so injecting them would move every A2 run off the official
-    packed config's tuning. The queue editor hides those controls for A2 instead."""
+    Deliberately does NOT apply the payload's lr / lrDecay / fitMrstft. Verified against stock
+    neural-amp-modeler 0.13.0: train() has no lr/lr_decay/fit_mrstft parameters at all, and A2's
+    optimizer comes only from config_model_packed.json (lr 0.004, ExponentialLR gamma 0.994,
+    mrstft_weight 0.0005) -- the official GUI can't change them either. Every NAM Lab builder
+    fills lrDecay=0.002 (gamma 0.998), so injecting the payload would quietly make every A2 run
+    decay ~3x slower than the official trainer. The queue editor hides those controls for A2."""
     return train(
         input_path=payload["inputPath"],
         output_path=payload["outputPath"],
