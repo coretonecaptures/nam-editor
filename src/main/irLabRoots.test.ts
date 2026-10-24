@@ -129,7 +129,9 @@ describe('isUnderAnyRoot through a symlink', () => {
       mkdirSync(join(base, 'root'))
       mkdirSync(join(base, 'outside'))
       writeFileSync(join(base, 'outside', 'cab.wav'), '')
-      symlinkSync(join(base, 'outside'), join(base, 'root', 'link'))
+      // 'junction' on Windows: a directory symlink there needs admin or Developer Mode (EPERM),
+      // a junction does not. The type is ignored on macOS/Linux.
+      symlinkSync(join(base, 'outside'), join(base, 'root', 'link'), 'junction')
       expect(isUnderAnyRoot(join(base, 'root', 'link', 'cab.wav'), [join(base, 'root')])).toBe(false)
       writeFileSync(join(base, 'root', 'real.wav'), '')
       expect(isUnderAnyRoot(join(base, 'root', 'real.wav'), [join(base, 'root')])).toBe(true)
