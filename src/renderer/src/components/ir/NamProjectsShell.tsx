@@ -21,6 +21,7 @@ import type {
   NamLabTrainIntent
 } from '../../types/namProjects'
 import { trainableInputLevelDbu } from '../../types/namProjects'
+import { NamCapturesOverview } from './NamCapturesOverview'
 import type { TrainerHistoryEntry, TrainerQueueJob } from '../../types/trainer'
 import { goToTrainingBatches, goToTrainingQueue, consumePendingNamProjectNav, consumePendingNamTrainNav, onNamProjectsIntent } from '../../appNav'
 import {
@@ -100,7 +101,6 @@ const ARCH_KEY = 'nam-lab-nam-projects-architecture'
 const EPOCHS_KEY = 'nam-lab-nam-projects-epochs'
 const TRAIN_PRESET_KEY = 'nam-lab-nam-projects-train-preset'
 const SELECTED_KEY = 'nam-lab-nam-projects-selected'
-const VIEW_KEY = 'nam-lab-nam-projects-view'
 const CAPTURE_VIEW_KEY = 'nam-lab-nam-projects-capture-view'
 // M4 (docs/ir-lab-manager-handoff-2026-09-02.md): port FolderCardView's
 // small/medium/large card-size toggle to CaptureCard. Same key-naming
@@ -1739,31 +1739,6 @@ function StatTile({
   )
 }
 
-function Breakdown({
-  title,
-  rows
-}: {
-  title: string
-  rows: Array<{ key: string; count: number }>
-}): React.ReactElement {
-  const max = Math.max(1, ...rows.map((r) => r.count))
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-semibold text-nm-text-2">{title}</span>
-      {rows.length === 0 && <span className="text-[11px] text-nm-text-3">—</span>}
-      {rows.map((r) => (
-        <div key={r.key} className="flex items-center gap-2 text-[11px]">
-          <span className="w-24 truncate text-nm-text-2">{r.key}</span>
-          <span className="flex-1 h-2 rounded bg-field-bg overflow-hidden">
-            <span className="block h-full bg-nm-accent/70" style={{ width: `${(r.count / max) * 100}%` }} />
-          </span>
-          <span className="w-8 text-right text-nm-text-3">{r.count}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function buildReport(o: NamLibraryOverview): string {
   const pct = o.totalCaptures ? Math.round((o.trainedCaptures / o.totalCaptures) * 100) : 0
   const lines: string[] = []
@@ -2450,9 +2425,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   const [captureMenu, setCaptureMenu] = useState<{ capture: NamCaptureRow; x: number; y: number } | null>(null)
   const [projectMenu, setProjectMenu] = useState<{ project: NamProjectSummary; x: number; y: number } | null>(null)
 
-  const [view, setView] = useState<'projects' | 'overview'>(() =>
-    readStored(VIEW_KEY) === 'overview' ? 'overview' : 'projects'
-  )
+  // Never restored: reopening on the Overview dashboard hid the project the operator was working in.
+  const [view, setView] = useState<'projects' | 'overview'>('projects')
   const [captureView, setCaptureView] = useState<'list' | 'cards'>(() =>
     readStored(CAPTURE_VIEW_KEY) === 'cards' ? 'cards' : 'list'
   )
@@ -2471,7 +2445,6 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
     readStored(SORT_LS_KEY).split(':')[1] === 'desc' ? 'desc' : 'asc'
   )
   const [overview, setOverview] = useState<NamLibraryOverview | null>(null)
-  const [reportCopied, setReportCopied] = useState(false)
   const [projectFilter, setProjectFilter] = useState('')
   // Projects index (design_handoff_nam_projects Screen 1) — shown when selectedId is null.
   const [indexView, setIndexView] = useState<'list' | 'cards'>(() =>
@@ -2669,7 +2642,8 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
       const project = await findIrLabProject(irLabProjectId, projectFolder)
       if (project) {
         setSelectedId(project.collectionId)
-        setView('overview')
+        // An IR Lab project link opens the project's own captures, not the Overview dashboard.
+        setView('projects')
       } else {
         setError('IR Lab opened a project that isn’t in this library yet. Add its folder with Add Library Folder.')
       }
@@ -2693,9 +2667,6 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
   useEffect(() => {
     if (selectedId) writeStored(SELECTED_KEY, selectedId)
   }, [selectedId])
-  useEffect(() => {
-    writeStored(VIEW_KEY, view)
-  }, [view])
   useEffect(() => {
     writeStored(CAPTURE_VIEW_KEY, captureView)
   }, [captureView])
@@ -3521,80 +3492,15 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           {!overview ? (
             <div className="text-sm text-nm-text-3">Loading overview…</div>
           ) : (
-            <div className="flex flex-col gap-5 max-w-[860px]">
-              <div className="flex flex-wrap items-start gap-2">
-                <StatTile label="Projects" value={overview.totalProjects} />
-                <StatTile label="Captures" value={overview.totalCaptures} />
-                <StatTile label="Trained" value={overview.trainedCaptures} tone="accent" />
-                <StatTile label="Untrained" value={overview.untrainedCaptures} tone="muted" />
-                <StatTile label="Synthetic" value={overview.syntheticCaptures} tone="muted" />
-                <StatTile
-                  label="Coverage"
-                  value={
-                    overview.totalCaptures
-                      ? `${Math.round((overview.trainedCaptures / overview.totalCaptures) * 100)}%`
-                      : '—'
-                  }
-                />
-                <StatTile
-                  label="Mean ESR"
-                  value={overview.avgTrainedEsr != null ? overview.avgTrainedEsr.toFixed(4) : '—'}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                <Breakdown title="By capture scope" rows={overview.byScope} />
-                <Breakdown title="By sample rate" rows={overview.bySampleRate} />
-                <Breakdown title="By trained architecture" rows={overview.byArchitecture} />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-nm-text-2">Per project</span>
-                  <button
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(buildReport(overview))
-                        setReportCopied(true)
-                        setTimeout(() => setReportCopied(false), 1500)
-                      } catch {
-                        setError('Could not copy the report to the clipboard.')
-                      }
-                    }}
-                    className="px-2.5 py-1 text-xs rounded border border-field-bd text-nm-text-2 hover:bg-hov"
-                  >
-                    {reportCopied ? 'Copied ✓' : 'Copy report (Markdown)'}
-                  </button>
-                </div>
-                <div className="border border-nm-border-s rounded overflow-hidden">
-                  <div className="grid grid-cols-[1fr_repeat(4,72px)] text-[11px] bg-panel-2 text-nm-text-3 px-2 py-1">
-                    <span>Project</span>
-                    <span className="text-right">Caps</span>
-                    <span className="text-right">Trained</span>
-                    <span className="text-right">Synth</span>
-                    <span className="text-right">Mean ESR</span>
-                  </div>
-                  {overview.projects.map((p) => (
-                    <button
-                      key={p.collectionId}
-                      onClick={() => {
-                        setSelectedId(p.collectionId)
-                        setView('projects')
-                      }}
-                      className="w-full grid grid-cols-[1fr_repeat(4,72px)] text-xs px-2 py-1.5 border-t border-nm-border-s hover:bg-hov text-left"
-                    >
-                      <span className="truncate text-nm-text">{p.name}</span>
-                      <span className="text-right text-nm-text-2">{p.captureCount}</span>
-                      <span className="text-right text-nm-text-2">{p.trainedCount}</span>
-                      <span className="text-right text-nm-text-2">{p.syntheticCount}</span>
-                      <span className="text-right text-nm-text-3">
-                        {p.avgTrainedEsr != null ? p.avgTrainedEsr.toFixed(4) : '—'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <NamCapturesOverview
+              overview={overview}
+              buildReport={buildReport}
+              onOpenProject={(id) => {
+                setSelectedId(id)
+                setView('projects')
+              }}
+              onCopyError={() => setError('Could not copy the report to the clipboard.')}
+            />
           )}
         </div>
       ) : selectedId === null ? (
@@ -3609,7 +3515,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
           onSortChange={setProjectSort}
           view={indexView}
           onViewChange={setIndexView}
-          onOpenProject={setSelectedId}
+          onOpenProject={(id) => {
+            setSelectedId(id)
+            setView('projects')
+          }}
           onStageAllUntrained={() => void stageOrTrainAllUntrained('stage')}
           onTrainAllUntrained={() => void stageOrTrainAllUntrained('runNext')}
           onOpenProjectDefaults={(collectionId, name) => setProjectDefaultsTarget({ collectionId, name })}
@@ -3645,7 +3554,10 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                   key={p.collectionId}
                   project={p}
                   selected={p.collectionId === selectedId}
-                  onSelect={() => setSelectedId(p.collectionId)}
+                  onSelect={() => {
+                    setSelectedId(p.collectionId)
+                    setView('projects')
+                  }}
                   onContextMenu={(project, x, y) => setProjectMenu({ project, x, y })}
                 />
               ))}
@@ -4138,6 +4050,7 @@ export function NamProjectsShell({ leftRail }: { leftRail?: React.ReactNode } = 
                 const p = projectMenu.project
                 setProjectMenu(null)
                 setSelectedId(p.collectionId)
+                setView('projects')
                 // detail may not be loaded for this project yet — fetch, then stage its untrained set.
                 void (async () => {
                   const d = await window.api.irLibraryGetNamProjectDetail(p.collectionId)
