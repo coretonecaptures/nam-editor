@@ -299,21 +299,6 @@ export function normalizeChorus(settings: ChorusSettings): ChorusSettings {
   }
 }
 
-/**
- * Glide an AudioParam to a value from wherever it is NOW.
- *
- * A bare linearRampToValueAtTime starts from the previous automation event, however long ago it
- * was — after any idle time the "50ms ramp" is a line from seconds back, already ~99% done, so it
- * lands as a step: a click on gain, a pitch blip on a delay line. Anchoring at the current value
- * first is the same cancel/set/ramp sequence the cabinet blend uses.
- */
-function glide(param: AudioParam | undefined, value: number, now: number, seconds: number): void {
-  if (!param) return
-  param.cancelScheduledValues(now)
-  param.setValueAtTime(param.value, now)
-  param.linearRampToValueAtTime(value, now + seconds)
-}
-
 /** tanh soft-square for the photocell voicing: same ±1 range and zero crossings as the sine. */
 function makePhotoLfoCurve(): Float32Array<ArrayBuffer> {
   const n = 1025
@@ -923,6 +908,8 @@ export class LiveEngine {
   private reverbEqHigh: BiquadFilterNode | null = null
   private reverbSettings: ReverbSettings = { ...DEFAULT_REVERB }
   private chorusSettings: ChorusSettings = { ...DEFAULT_CHORUS }
+  /** True while start() applies the initial settings — see glide(). */
+  private snapParams = false
   private chorusIn: GainNode | null = null
   private chorusOut: GainNode | null = null
   private chorusDelayL: DelayNode | null = null
@@ -1251,6 +1238,7 @@ export class LiveEngine {
       this.chorusSettings = normalizeChorus({ ...DEFAULT_CHORUS, ...options.chorus })
       this.buildFxChain(ctx)
       this.buildPlate(ctx)
+      this.snapParams = true
       this.setGate(options.gate ?? DEFAULT_GATE)
       this.setEq(options.eq ?? DEFAULT_EQ)
       this.setDelay(options.delay ?? DEFAULT_DELAY)
@@ -1261,6 +1249,7 @@ export class LiveEngine {
       this.setReverb(options.reverb ?? DEFAULT_REVERB)
       if (options.reverbIr) await this.setReverbIr(options.reverbIr)
       guard()
+      this.snapParams = false
 
       this.irMix = Math.max(0, Math.min(1, options.irMix ?? 1))
       this.irA = options.ir ?? null
@@ -1966,9 +1955,32 @@ export class LiveEngine {
     if (!ctx) return
     const now = ctx.currentTime
     const on = next.enabled
-    this.eqBass?.gain.linearRampToValueAtTime(on ? next.bassDb : 0, now + 0.05)
-    this.eqMid?.gain.linearRampToValueAtTime(on ? next.midDb : 0, now + 0.05)
-    this.eqTreble?.gain.linearRampToValueAtTime(on ? next.trebleDb : 0, now + 0.05)
+    this.glide(this.eqBass?.gain, on ? next.bassDb : 0, now, 0.05)
+    this.glide(this.eqMid?.gain, on ? next.midDb : 0, now, 0.05)
+    this.glide(this.eqTreble?.gain, on ? next.trebleDb : 0, now, 0.05)
+  }
+
+  /**
+   * Glide an AudioParam to a value from wherever it is NOW.
+   *
+   * A bare linearRampToValueAtTime starts from the previous automation event, however long ago it
+   * was — after any idle time the "50ms ramp" is a line from seconds back, already ~99% done, so it
+   * lands as a step: a click on gain, a pitch blip on a delay line. Anchoring at the current value
+   * first is the same cancel/set/ramp sequence the cabinet blend uses.
+   *
+   * While start() applies the initial settings, values are SET rather than glided: nothing is
+   * audible yet, and gliding from node defaults (a 440 Hz oscillator, a 0 s delay line) would
+   * sweep through them for the first 50ms instead.
+   */
+  private glide(param: AudioParam | undefined, value: number, now: number, seconds: number): void {
+    if (!param) return
+    param.cancelScheduledValues(now)
+    if (this.snapParams) {
+      param.setValueAtTime(value, now)
+      return
+    }
+    param.setValueAtTime(param.value, now)
+    param.linearRampToValueAtTime(value, now + seconds)
   }
 
   get chorus(): ChorusSettings {
@@ -1989,44 +2001,44 @@ export class LiveEngine {
     // not 2ms either side of centre.
     const depthSec = chorusActive ? next.depthMs / 2000 : 0
 
-    glide(this.chorusWet?.gain, wet, now, RAMP)
-    glide(this.chorusOscL?.frequency, next.rateHz, now, RAMP)
-    glide(this.chorusOscR?.frequency, next.rateHz, now, RAMP)
-    glide(this.chorusDepthL?.gain, depthSec, now, RAMP)
-    glide(this.chorusDepthR?.gain, -depthSec, now, RAMP)
+    this.glide(this.chorusWet?.gain, wet, now, RAMP)
+    this.glide(this.chorusOscL?.frequency, next.rateHz, now, RAMP)
+    this.glide(this.chorusOscR?.frequency, next.rateHz, now, RAMP)
+    this.glide(this.chorusDepthL?.gain, depthSec, now, RAMP)
+    this.glide(this.chorusDepthR?.gain, -depthSec, now, RAMP)
 
     const direct = 0.5 + next.width / 2
     const cross = 0.5 - next.width / 2
-    glide(this.chorusDirectL?.gain, direct, now, RAMP)
-    glide(this.chorusDirectR?.gain, direct, now, RAMP)
-    glide(this.chorusCrossL?.gain, cross, now, RAMP)
-    glide(this.chorusCrossR?.gain, cross, now, RAMP)
+    this.glide(this.chorusDirectL?.gain, direct, now, RAMP)
+    this.glide(this.chorusDirectR?.gain, direct, now, RAMP)
+    this.glide(this.chorusCrossL?.gain, cross, now, RAMP)
+    this.glide(this.chorusCrossR?.gain, cross, now, RAMP)
 
     // Tremolo — shares the chorus rate knob (both are just an LFO frequency) but its own depth.
     const tremActive = next.enabled && next.type === 'tremolo'
     const harmonic = tremActive && next.harmonic
-    glide(this.tremOsc?.frequency, next.rateHz, now, RAMP)
+    this.glide(this.tremOsc?.frequency, next.rateHz, now, RAMP)
     // Voicing only shapes the standard tremolo's LFO. Harmonic is its own circuit with its own
     // (sine) oscillator in the real amp, so it always runs the round shape.
     const photo = next.voicing === 'photo' && !harmonic
-    glide(this.tremTubeLfo?.gain, photo ? 0 : 1, now, RAMP)
-    glide(this.tremPhotoLfo?.gain, photo ? 1 : 0, now, RAMP)
-    glide(this.tremBypassGain?.gain, tremActive ? 0 : 1, now, RAMP)
-    glide(this.tremStdSel?.gain, tremActive && !harmonic ? 1 : 0, now, RAMP)
-    glide(this.tremHarmSel?.gain, harmonic ? 1 : 0, now, RAMP)
+    this.glide(this.tremTubeLfo?.gain, photo ? 0 : 1, now, RAMP)
+    this.glide(this.tremPhotoLfo?.gain, photo ? 1 : 0, now, RAMP)
+    this.glide(this.tremBypassGain?.gain, tremActive ? 0 : 1, now, RAMP)
+    this.glide(this.tremStdSel?.gain, tremActive && !harmonic ? 1 : 0, now, RAMP)
+    this.glide(this.tremHarmSel?.gain, harmonic ? 1 : 0, now, RAMP)
 
     // A modulated gain rides on a centre value with the oscillator swinging around it, so level
     // travels from 1 at the peak down to (1 - depth) at the trough.
     const swing = next.tremoloDepth / 2
     const centre = 1 - swing
-    glide(this.tremFullGain?.gain, centre, now, RAMP)
-    glide(this.tremFullDepthGain?.gain, swing, now, RAMP)
-    glide(this.tremLowGain?.gain, centre, now, RAMP)
-    glide(this.tremHighGain?.gain, centre, now, RAMP)
-    glide(this.tremLowDepthGain?.gain, swing, now, RAMP)
+    this.glide(this.tremFullGain?.gain, centre, now, RAMP)
+    this.glide(this.tremFullDepthGain?.gain, swing, now, RAMP)
+    this.glide(this.tremLowGain?.gain, centre, now, RAMP)
+    this.glide(this.tremHighGain?.gain, centre, now, RAMP)
+    this.glide(this.tremLowDepthGain?.gain, swing, now, RAMP)
     // The high band runs in ANTIPHASE — it dips as the low band swells. That opposition, across
     // an overlapping crossover, is what separates harmonic tremolo from plain amplitude tremolo.
-    glide(this.tremHighDepthGain?.gain, -swing, now, RAMP)
+    this.glide(this.tremHighDepthGain?.gain, -swing, now, RAMP)
   }
 
   /** Seconds of delay impulse being convolved, after trimming. 0 when none. */
@@ -2138,19 +2150,12 @@ export class LiveEngine {
     const plateWet = next.mode === 'plate' ? wet : 0
     const convWet = next.mode === 'convolution' ? wet : 0
 
-    // Anchored before ramping — see the matching comment in setDelay for why.
-    if (this.plateWet) {
-      this.plateWet.gain.setValueAtTime(this.plateWet.gain.value, now)
-      this.plateWet.gain.linearRampToValueAtTime(plateWet, now + RAMP)
-    }
-    if (this.reverbWet) {
-      this.reverbWet.gain.setValueAtTime(this.reverbWet.gain.value, now)
-      this.reverbWet.gain.linearRampToValueAtTime(convWet, now + RAMP)
-    }
-    this.reverbDry?.gain.linearRampToValueAtTime(1, now + RAMP)
+    this.glide(this.plateWet?.gain, plateWet, now, RAMP)
+    this.glide(this.reverbWet?.gain, convWet, now, RAMP)
+    this.glide(this.reverbDry?.gain, 1, now, RAMP)
 
-    this.reverbEqLow?.gain.linearRampToValueAtTime(next.lowDb, now + RAMP)
-    this.reverbEqHigh?.gain.linearRampToValueAtTime(next.highDb, now + RAMP)
+    this.glide(this.reverbEqLow?.gain, next.lowDb, now, RAMP)
+    this.glide(this.reverbEqHigh?.gain, next.highDb, now, RAMP)
 
     this.plate?.port.postMessage({
       type: 'params',
@@ -2225,47 +2230,34 @@ export class LiveEngine {
     const leftSec = (next.timeMs / 1000) * (next.ratio >= 1 ? 1 : next.ratio)
     const rightSec = (next.timeMs / 1000) * (next.ratio >= 1 ? next.ratio : 1)
 
-    this.delayL?.delayTime.linearRampToValueAtTime(Math.min(leftSec, MAX_DELAY_SECONDS), now + RAMP)
-    this.delayR?.delayTime.linearRampToValueAtTime(Math.min(rightSec, MAX_DELAY_SECONDS), now + RAMP)
-    if (this.delayFeedback) this.delayFeedback.gain.linearRampToValueAtTime(next.feedback, now + RAMP)
-    if (this.delayDamp) this.delayDamp.frequency.linearRampToValueAtTime(next.toneHz, now + RAMP)
+    this.glide(this.delayL?.delayTime, Math.min(leftSec, MAX_DELAY_SECONDS), now, RAMP)
+    this.glide(this.delayR?.delayTime, Math.min(rightSec, MAX_DELAY_SECONDS), now, RAMP)
+    this.glide(this.delayFeedback?.gain, next.feedback, now, RAMP)
+    this.glide(this.delayDamp?.frequency, next.toneHz, now, RAMP)
     const wet = next.enabled ? next.mix : 0
-    // Anchored with setValueAtTime before ramping: without it, a linearRampToValueAtTime can
-    // start its ramp from whatever value a PREVIOUS ramp was scheduled to end at, rather than
-    // the param's actual current value — usually invisible, but on the very first enable after
-    // sitting at 0 it could mean the new ramp starts from a stale target instead of 0, which
-    // reads as "turned it on, heard nothing" until the next toggle schedules a correct one.
-    if (this.delayWet) {
-      this.delayWet.gain.setValueAtTime(this.delayWet.gain.value, now)
-      this.delayWet.gain.linearRampToValueAtTime(next.mode === 'algorithmic' ? wet : 0, now + RAMP)
-    }
-    if (this.delayConvWet) {
-      this.delayConvWet.gain.setValueAtTime(this.delayConvWet.gain.value, now)
-      this.delayConvWet.gain.linearRampToValueAtTime(next.mode === 'convolution' ? wet : 0, now + RAMP)
-    }
+    this.glide(this.delayWet?.gain, next.mode === 'algorithmic' ? wet : 0, now, RAMP)
+    this.glide(this.delayConvWet?.gain, next.mode === 'convolution' ? wet : 0, now, RAMP)
     // Equal-gain rather than equal-power: the dry signal is the capture itself, and dipping it as
     // you add ambience makes the amp sound like it is losing level rather than gaining space.
-    if (this.delayDry) this.delayDry.gain.linearRampToValueAtTime(1, now + RAMP)
+    this.glide(this.delayDry?.gain, 1, now, RAMP)
 
     // The crossfade between the two topologies (see buildFxChain) now takes a continuous amount
     // instead of a hard 0/1 — that IS the whole feature: 0 sounds like Center even with
     // Ping-Pong selected, 1 is full hard-alternating stereo, everywhere between is in between.
     const pp = next.pingPong ? next.pingPongWidth : 0
-    this.ppSend?.gain.linearRampToValueAtTime(pp, now + RAMP)
-    this.ppTap?.gain.linearRampToValueAtTime(pp, now + RAMP)
-    this.ppOut?.gain.linearRampToValueAtTime(pp, now + RAMP)
-    this.monoTap?.gain.linearRampToValueAtTime(1 - pp, now + RAMP)
-    this.monoOut?.gain.linearRampToValueAtTime(1 - pp, now + RAMP)
+    this.glide(this.ppSend?.gain, pp, now, RAMP)
+    this.glide(this.ppTap?.gain, pp, now, RAMP)
+    this.glide(this.ppOut?.gain, pp, now, RAMP)
+    this.glide(this.monoTap?.gain, 1 - pp, now, RAMP)
+    this.glide(this.monoOut?.gain, 1 - pp, now, RAMP)
 
     const depthSec = next.modDepthMs / 1000
-    if (this.modOsc) this.modOsc.frequency.linearRampToValueAtTime(next.modRateHz, now + RAMP)
-    if (this.modDepthL) this.modDepthL.gain.linearRampToValueAtTime(depthSec, now + RAMP)
-    if (this.modDepthR) this.modDepthR.gain.linearRampToValueAtTime(-depthSec, now + RAMP)
+    this.glide(this.modOsc?.frequency, next.modRateHz, now, RAMP)
+    this.glide(this.modDepthL?.gain, depthSec, now, RAMP)
+    this.glide(this.modDepthR?.gain, -depthSec, now, RAMP)
 
-    if (this.delayPanOsc) this.delayPanOsc.frequency.linearRampToValueAtTime(next.panRateHz, now + RAMP)
-    if (this.delayPanDepth) {
-      this.delayPanDepth.gain.linearRampToValueAtTime(next.panEnabled ? 1 : 0, now + RAMP)
-    }
+    this.glide(this.delayPanOsc?.frequency, next.panRateHz, now, RAMP)
+    this.glide(this.delayPanDepth?.gain, next.panEnabled ? 1 : 0, now, RAMP)
   }
 
   get echoLab(): EchoLabSettings {
@@ -2324,14 +2316,14 @@ export class LiveEngine {
       ? leftSec
       : Math.max(0.001, Math.min(MAX_DELAY_SECONDS, (next.rightTimeMs / 1000) * (1 + next.spread)))
 
-    this.echoLabDelayL?.delayTime.linearRampToValueAtTime(Math.min(leftSec, MAX_DELAY_SECONDS), now + RAMP)
-    this.echoLabDelayR?.delayTime.linearRampToValueAtTime(rightSec, now + RAMP)
+    this.glide(this.echoLabDelayL?.delayTime, Math.min(leftSec, MAX_DELAY_SECONDS), now, RAMP)
+    this.glide(this.echoLabDelayR?.delayTime, rightSec, now, RAMP)
     // In Single, echoLabFeedbackL is the ONE shared re-entry point (fed by echoLabFbPpTap/
     // echoLabFbMonoTap below) and carries `feedback`; echoLabFeedbackR gets nothing to amplify
     // (echoLabFbRSelfDual is 0 there) so its own value is moot, but rightFeedback is still the
     // semantically correct thing to park it at for when Dual re-engages.
-    this.echoLabFeedbackL?.gain.linearRampToValueAtTime(single ? next.feedback : next.leftFeedback, now + RAMP)
-    this.echoLabFeedbackR?.gain.linearRampToValueAtTime(single ? 0 : next.rightFeedback, now + RAMP)
+    this.glide(this.echoLabFeedbackL?.gain, single ? next.feedback : next.leftFeedback, now, RAMP)
+    this.glide(this.echoLabFeedbackR?.gain, single ? 0 : next.rightFeedback, now, RAMP)
 
     // Ping-Pong (Single) vs independent Dual — both topologies stay wired, selected entirely by
     // gain, same convention as everywhere else in this file. pp is 0 in Dual (meaningless there,
@@ -2339,15 +2331,15 @@ export class LiveEngine {
     // echoLabPpSend/echoLabFbPpTap field comments for why this shape (undiminished hop, ONE
     // feedback-scaled re-entry) replaced the earlier per-line-additive version.
     const pp = single ? next.pingPongWidth : 0
-    this.echoLabDualRGain?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
-    this.echoLabPpSend?.gain.linearRampToValueAtTime(pp, now + RAMP)
-    this.echoLabFbPpTap?.gain.linearRampToValueAtTime(single ? pp : 0, now + RAMP)
-    this.echoLabFbMonoTap?.gain.linearRampToValueAtTime(single ? 1 - pp : 0, now + RAMP)
-    this.echoLabFbLSelfDual?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
-    this.echoLabFbRSelfDual?.gain.linearRampToValueAtTime(single ? 0 : 1, now + RAMP)
+    this.glide(this.echoLabDualRGain?.gain, single ? 0 : 1, now, RAMP)
+    this.glide(this.echoLabPpSend?.gain, pp, now, RAMP)
+    this.glide(this.echoLabFbPpTap?.gain, single ? pp : 0, now, RAMP)
+    this.glide(this.echoLabFbMonoTap?.gain, single ? 1 - pp : 0, now, RAMP)
+    this.glide(this.echoLabFbLSelfDual?.gain, single ? 0 : 1, now, RAMP)
+    this.glide(this.echoLabFbRSelfDual?.gain, single ? 0 : 1, now, RAMP)
     // R's contribution to the stereo merge now reflects Ping-Pong being engaged, not just Dual.
-    this.echoLabRGain?.gain.linearRampToValueAtTime(single ? pp : 1, now + RAMP)
-    this.echoLabMonoTap?.gain.linearRampToValueAtTime(single ? 1 - pp : 0, now + RAMP)
+    this.glide(this.echoLabRGain?.gain, single ? pp : 1, now, RAMP)
+    this.glide(this.echoLabMonoTap?.gain, single ? 1 - pp : 0, now, RAMP)
 
     // Character drives the feedback-loop tone filter, and which char1/char2 knob (if either)
     // feeds the modulation LFO. Digital stays effectively transparent regardless of char1's Tilt
@@ -2378,13 +2370,13 @@ export class LiveEngine {
       modDepthMsL = 0
     }
     const toneClamped = Math.max(200, Math.min(18000, toneHz))
-    this.echoLabToneL?.frequency.linearRampToValueAtTime(toneClamped, now + RAMP)
-    this.echoLabToneR?.frequency.linearRampToValueAtTime(toneClamped, now + RAMP)
+    this.glide(this.echoLabToneL?.frequency, toneClamped, now, RAMP)
+    this.glide(this.echoLabToneR?.frequency, toneClamped, now, RAMP)
 
     const modDepthSec = (next.character === 'digital' ? 0 : modDepthMsL) / 1000
-    if (this.echoLabModOsc) this.echoLabModOsc.frequency.linearRampToValueAtTime(next.modRateHz, now + RAMP)
-    this.echoLabModDepthL?.gain.linearRampToValueAtTime(modDepthSec, now + RAMP)
-    this.echoLabModDepthR?.gain.linearRampToValueAtTime(-modDepthSec, now + RAMP)
+    this.glide(this.echoLabModOsc?.frequency, next.modRateHz, now, RAMP)
+    this.glide(this.echoLabModDepthL?.gain, modDepthSec, now, RAMP)
+    this.glide(this.echoLabModDepthR?.gain, -modDepthSec, now, RAMP)
 
     // Tape-only mechanisms — see tape-delay-engineering skill (ir-lab repo). All four are no-ops
     // (0 gain / 0 dB) outside Tape, so Digital/Memory Man are unaffected.
@@ -2396,16 +2388,16 @@ export class LiveEngine {
     // consistently with flutter's own corrected curve instead of reintroducing the same
     // too-fast-linear problem in its own separate component.
     const wowDepthSec = isTape ? (modDepthMsL * TAPE_WOW_FRACTION) / 1000 : 0
-    this.echoLabWowDepthL?.gain.linearRampToValueAtTime(wowDepthSec, now + RAMP)
-    this.echoLabWowDepthR?.gain.linearRampToValueAtTime(wowDepthSec, now + RAMP)
+    this.glide(this.echoLabWowDepthL?.gain, wowDepthSec, now, RAMP)
+    this.glide(this.echoLabWowDepthR?.gain, wowDepthSec, now, RAMP)
 
     const noiseGain = tapeAge * TAPE_NOISE_MAX_GAIN
-    this.echoLabNoiseGainL?.gain.linearRampToValueAtTime(noiseGain, now + RAMP)
-    this.echoLabNoiseGainR?.gain.linearRampToValueAtTime(noiseGain, now + RAMP)
+    this.glide(this.echoLabNoiseGainL?.gain, noiseGain, now, RAMP)
+    this.glide(this.echoLabNoiseGainR?.gain, noiseGain, now, RAMP)
 
     const headBumpDb = tapeAge * TAPE_HEAD_BUMP_MAX_DB
-    this.echoLabHeadBumpL?.gain.linearRampToValueAtTime(headBumpDb, now + RAMP)
-    this.echoLabHeadBumpR?.gain.linearRampToValueAtTime(headBumpDb, now + RAMP)
+    this.glide(this.echoLabHeadBumpL?.gain, headBumpDb, now, RAMP)
+    this.glide(this.echoLabHeadBumpR?.gain, headBumpDb, now, RAMP)
 
     // A WaveShaper curve isn't an AudioParam — only rebuild it when the EFFECTIVE drive actually
     // changed. Age contributes on top of Color/Drive rather than replacing it, so a fresh
@@ -2421,24 +2413,21 @@ export class LiveEngine {
     }
 
     const wet = next.enabled ? next.mix : 0
-    if (this.echoLabWet) {
-      this.echoLabWet.gain.setValueAtTime(this.echoLabWet.gain.value, now)
-      this.echoLabWet.gain.linearRampToValueAtTime(wet, now + RAMP)
-    }
-    if (this.echoLabDry) this.echoLabDry.gain.linearRampToValueAtTime(1, now + RAMP)
+    this.glide(this.echoLabWet?.gain, wet, now, RAMP)
+    this.glide(this.echoLabDry?.gain, 1, now, RAMP)
 
     const direct = 0.5 + next.width / 2
     const cross = 0.5 - next.width / 2
-    this.echoLabWidenDirectL?.gain.linearRampToValueAtTime(direct, now + RAMP)
-    this.echoLabWidenDirectR?.gain.linearRampToValueAtTime(direct, now + RAMP)
-    this.echoLabWidenCrossL?.gain.linearRampToValueAtTime(cross, now + RAMP)
-    this.echoLabWidenCrossR?.gain.linearRampToValueAtTime(cross, now + RAMP)
+    this.glide(this.echoLabWidenDirectL?.gain, direct, now, RAMP)
+    this.glide(this.echoLabWidenDirectR?.gain, direct, now, RAMP)
+    this.glide(this.echoLabWidenCrossL?.gain, cross, now, RAMP)
+    this.glide(this.echoLabWidenCrossR?.gain, cross, now, RAMP)
 
-    this.echoLabEqLow?.gain.linearRampToValueAtTime(next.eqLowDb, now + RAMP)
-    this.echoLabEqHigh?.gain.linearRampToValueAtTime(next.eqHighDb, now + RAMP)
+    this.glide(this.echoLabEqLow?.gain, next.eqLowDb, now, RAMP)
+    this.glide(this.echoLabEqHigh?.gain, next.eqHighDb, now, RAMP)
 
-    if (this.echoLabPanOsc) this.echoLabPanOsc.frequency.linearRampToValueAtTime(next.panRateHz, now + RAMP)
-    this.echoLabPanDepth?.gain.linearRampToValueAtTime(next.panEnabled ? 1 : 0, now + RAMP)
+    this.glide(this.echoLabPanOsc?.frequency, next.panRateHz, now, RAMP)
+    this.glide(this.echoLabPanDepth?.gain, next.panEnabled ? 1 : 0, now, RAMP)
 
     if (next.secondaryDelayPosition !== prevOrder) this.reconcileChainOrder()
   }
@@ -2499,10 +2488,8 @@ export class LiveEngine {
     const ctx = this.ctx
     if (!ctx) return
     const now = ctx.currentTime
-    if (this.reverbWet) {
-      this.reverbWet.gain.linearRampToValueAtTime(this.reverbMix, now + 0.05)
-    }
-    if (this.reverbDry) this.reverbDry.gain.linearRampToValueAtTime(1, now + 0.05)
+    this.glide(this.reverbWet?.gain, this.reverbMix, now, 0.05)
+    this.glide(this.reverbDry?.gain, 1, now, 0.05)
   }
 
   /** Seconds of reverb impulse actually being convolved, after trimming. 0 when none. */
@@ -3238,6 +3225,7 @@ export class LiveEngine {
     this.reverbIrChannels = 0
     this.reverbSettings = { ...DEFAULT_REVERB }
     this.chorusSettings = { ...DEFAULT_CHORUS }
+    this.snapParams = false
     for (const osc of [this.chorusOscL, this.chorusOscR]) {
       try {
         osc?.stop()
