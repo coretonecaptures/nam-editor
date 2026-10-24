@@ -5848,6 +5848,12 @@ INSTRUCTIONS:
               onLiveJumpHandled={() => setLiveJumpRequest(null)}
               libraryFiles={files}
               onOpenAmpCapture={(filePath) => void openRigAmpCapture(filePath)}
+              onBrowseAmpCapture={() => {
+                void (async () => {
+                  const paths = await window.api.openFiles()
+                  if (paths[0]) await openRigAmpCapture(paths[0])
+                })()
+              }}
             />
           ) : showGroupsAdmin ? (
             <GroupsAdminPage

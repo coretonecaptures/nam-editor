@@ -318,6 +318,9 @@ interface PlayerPanelProps {
   /** A rig preset can carry its own amp capture — recalling one switches to it if it isn't
    *  already open. PlayerPanel doesn't own file-loading itself, so this delegates up. */
   onOpenAmpCapture?: (filePath: string) => void
+  /** Opens a .nam file outside the loaded library, then hands it back to the owning screen.
+   *  Kept separate from onOpenAmpCapture so the player never owns filesystem dialogs. */
+  onBrowseAmpCapture?: () => void
   /** Controlled cabinet IR. Omit entirely (NAM mode) and the panel owns its own cab choice through
    *  its picker, exactly as before. Provide it (IR mode) and the cabinet is driven from outside —
    *  clicking an IR in the browse list sets the cab here — with the picker reporting user changes
@@ -525,6 +528,7 @@ export function PlayerPanel({
   onLiveJumpHandled,
   libraryFiles = [],
   onOpenAmpCapture,
+  onBrowseAmpCapture,
   cabIrPath,
   onCabIrPathChange,
   titleOverride,
@@ -3139,6 +3143,51 @@ export function PlayerPanel({
       })),
     [libraryFiles]
   )
+  // The Live Rig's amp switcher deliberately uses the same library-first picker as the pedal
+  // stage. A live player should be able to move between captures without first escaping back to
+  // Browse, but a one-off .nam file remains available through its explicit Browse fallback.
+  // Include the current capture even when it was opened directly and is not in the library list.
+  const ampOptions = useMemo(() => {
+    const byPath = new Map<string, { filePath: string; label: string; sublabel?: string }>()
+    for (const candidate of [...libraryFiles, file]) {
+      if (!byPath.has(candidate.filePath)) {
+        byPath.set(candidate.filePath, {
+          filePath: candidate.filePath,
+          label: candidate.metadata.name || candidate.fileName,
+          sublabel: [candidate.metadata.gear_make, candidate.metadata.gear_model].filter(Boolean).join(' ') || undefined
+        })
+      }
+    }
+    return [...byPath.values()]
+  }, [libraryFiles, file])
+  const ampPicker = onOpenAmpCapture && onBrowseAmpCapture ? (
+    <CapturePicker
+      key="amp-picker"
+      options={ampOptions}
+      activePath={file.filePath}
+      placeholder="Choose an amp capture"
+      onPick={(filePath) => {
+        if (filePath !== file.filePath) onOpenAmpCapture(filePath)
+      }}
+      onBrowse={onBrowseAmpCapture}
+      width={300}
+      favoritesKind="amp-capture"
+      renderTrigger={({ onClick: openPicker, open }) => (
+        <button
+          onClick={openPicker}
+          title="Choose another amp capture from the library, or browse for a .nam file"
+          style={{
+            height: 28, padding: '0 10px', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap',
+            background: open ? 'var(--active)' : 'var(--raised)', border: `1px solid ${open ? RIG_GOLD : 'var(--border)'}`,
+            color: open ? 'var(--accent-text)' : 'var(--text-2)', font: "600 10px 'IBM Plex Mono', monospace",
+            letterSpacing: '.06em', textTransform: 'uppercase'
+          }}
+        >
+          Change amp…
+        </button>
+      )}
+    />
+  ) : null
   const pedalChip = (
     <CapturePicker
       key="pedal-chip"
@@ -3230,6 +3279,7 @@ export function PlayerPanel({
             {m.tone_type && (
               <span className={`nam-chip ${namToneChipClass(m.tone_type)}`}><span className="nam-dot" />{TONE_LABELS[m.tone_type] ?? m.tone_type}</span>
             )}
+            {ampPicker}
             {stepper}
           </div>
           {summaryRows.length > 0 && (
@@ -3971,6 +4021,17 @@ export function PlayerPanel({
               borderBottom: '1px solid var(--border-soft)'
             }}
           >
+            <button
+              onClick={onClose}
+              title="Return to the capture library"
+              style={{
+                height: 26, padding: '0 10px', borderRadius: 8, cursor: 'pointer',
+                background: 'var(--raised)', border: '1px solid var(--border)', color: 'var(--text-2)',
+                font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.06em', textTransform: 'uppercase'
+              }}
+            >
+              ← Library
+            </button>
             <span style={{ font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.18em', color: RIG_GOLD }}>LIVE RIG</span>
             <span style={{ font: "600 13px 'IBM Plex Sans', sans-serif", color: 'var(--text)' }}>{captureLabel}</span>
             {(m.gear_make || m.gear_model) && (
@@ -3982,14 +4043,14 @@ export function PlayerPanel({
             {groupControl}
             <button
               onClick={() => setPoppedOut(false)}
-              title="Back to the panel (Esc)"
+              title="Return to the compact player (Esc)"
               style={{
                 height: 26, padding: '0 12px', borderRadius: 8, cursor: 'pointer',
                 background: 'var(--raised)', border: '1px solid var(--border)', color: 'var(--text-2)',
                 font: "600 10px 'IBM Plex Mono', monospace", letterSpacing: '.08em', textTransform: 'uppercase'
               }}
             >
-              Collapse
+              Compact player
             </button>
           </div>
 
