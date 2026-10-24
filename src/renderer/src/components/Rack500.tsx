@@ -7,7 +7,10 @@ import { RackKnob } from './RackKnob'
 import { RackButton, RackDisplay, RackLed } from './RackParts'
 import { rackDimStyle } from './RackPower'
 import {
+  CHORUS_MAX_DEPTH_MS,
   EQ_MAX_DB,
+  MOD_RATE_MAX_HZ,
+  MOD_RATE_MIN_HZ,
   type ChorusSettings,
   type EqSettings,
   type GateSettings,
@@ -26,10 +29,6 @@ import {
  * overlaid to switch one OFF. Three unlit sprites exist rather than one, cut from each module's
  * own faceplate colour, so the sprite's few background pixels always match what is behind them.
  */
-
-/** Max total peak-to-peak delay-time swing the Depth knob reaches, in ms — see the knob's own
- *  comment below for why this is squared rather than linear. */
-const CHORUS_MAX_DEPTH_MS = 6
 
 const P = { w: 1774, h: 887 }
 const pctX = (v: number): number => (v / P.w) * 100
@@ -125,9 +124,9 @@ export function Rack500({
 
       {/* ── Modulation. Mix is chorus-only; a Fender tremolo has no wet/dry knob (Speed and
           Intensity are the whole story), so it's simply inert in Tremolo mode, as on real
-          hardware. Width is NOT inert in Tremolo — it's repurposed as the voicing switch, left of
-          centre '63 tube-bias, right of centre '65 photocell: an otherwise-dead knob doing real
-          work instead, the way this exact control sometimes doubles up on real multi-mode units. */}
+          hardware. The fourth knob is NOT inert in Tremolo — it becomes the voicing switch, left
+          of centre '63 tube-bias, right of centre '65 photocell. It writes its own `voicing` field,
+          not Width, so choosing a tremolo voice never moves the chorus's stereo spread. */}
       <RackKnob image={knobMod} label="Mix" value={chorus.mix} min={0} max={1} format={pct}
         onChange={(v) => onChorus({ mix: v })} centerXPct={MOD_KNOB_XS[0]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
       {/* Chorus depth is knob-position², not linear — a linear 0-12ms range put an already
@@ -139,16 +138,18 @@ export function Rack500({
           travel instead of only in a narrow sliver near zero. Max total swing is also down from
           12ms to 6ms peak-to-peak, since even the old MAXIMUM was past what those pedals reach. */}
       <RackKnob image={knobMod} label="Depth"
-        value={trem ? chorus.tremoloDepth : Math.sqrt(chorus.depthMs / CHORUS_MAX_DEPTH_MS)}
+        value={trem ? chorus.tremoloDepth : Math.sqrt(Math.min(1, Math.max(0, chorus.depthMs / CHORUS_MAX_DEPTH_MS)))}
         min={0} max={1}
         format={trem ? pct : (v) => `${(v * v * CHORUS_MAX_DEPTH_MS).toFixed(1)} ms`}
         onChange={(v) => onChorus(trem ? { tremoloDepth: v } : { depthMs: v * v * CHORUS_MAX_DEPTH_MS })}
         centerXPct={MOD_KNOB_XS[1]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
-      <RackKnob image={knobMod} label="Rate" value={chorus.rateHz} min={0.05} max={6} format={(v) => `${v.toFixed(2)} Hz`}
+      <RackKnob image={knobMod} label="Rate" value={chorus.rateHz} min={MOD_RATE_MIN_HZ} max={MOD_RATE_MAX_HZ} format={(v) => `${v.toFixed(2)} Hz`}
         onChange={(v) => onChorus({ rateHz: v })} centerXPct={MOD_KNOB_XS[2]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
-      <RackKnob image={knobMod} label={trem ? 'Voicing' : 'Width'} value={chorus.width} min={0} max={1}
+      <RackKnob image={knobMod} label={trem ? 'Voicing' : 'Width'}
+        value={trem ? (chorus.voicing === 'photo' ? 1 : 0) : chorus.width} min={0} max={1}
+        locked={trem && chorus.harmonic}
         format={trem ? (v) => (v < 0.5 ? "'63 tube" : "'65 photo") : pct}
-        onChange={(v) => onChorus({ width: v })} centerXPct={MOD_KNOB_XS[3]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
+        onChange={(v) => onChorus(trem ? { voicing: v < 0.5 ? 'tube' : 'photo' } : { width: v })} centerXPct={MOD_KNOB_XS[3]} centerYPct={MOD_KNOB_Y} diameterPct={MOD_KNOB_D} />
 
       <RackButton label="Modulation on/off" centerXPct={MOD_BYPASS_X} centerYPct={MOD_BYPASS_BTN_Y} widthPct={BTN_W} heightPct={BTN_H} onClick={() => onChorus({ enabled: !chorus.enabled })} />
       <RackLed active={chorus.enabled} centerXPct={MOD_BYPASS_X} centerYPct={MOD_LED_Y} widthPct={LED_W} />

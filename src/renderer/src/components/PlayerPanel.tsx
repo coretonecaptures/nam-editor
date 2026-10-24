@@ -35,6 +35,7 @@ import { Rack500 } from './Rack500'
 import { detectPreset } from '../utils/detectPreset'
 import { getCaptureBestEsr, getEsrTone } from '../utils/esr'
 import {
+  CHORUS_MAX_DEPTH_MS,
   DEFAULT_CHORUS,
   DEFAULT_DELAY,
   DEFAULT_ECHO_LAB,
@@ -50,6 +51,8 @@ import {
   MAX_MOD_DEPTH_MS,
   MAX_PAN_RATE_HZ,
   MIN_PAN_RATE_HZ,
+  MOD_RATE_MAX_HZ,
+  MOD_RATE_MIN_HZ,
   REVERB_EQ_MAX_DB,
   REVERB_HIGH_SHELF_HZ,
   REVERB_LOW_SHELF_HZ,
@@ -1637,8 +1640,11 @@ export function PlayerPanel({
   // can never match, which is exactly what "loads fine but the picker still says No rig loaded"
   // turned out to be: cabIrPath/cabIrEnabled/ampCapturePath/pedalCapturePath/pedalGainDb/
   // pedalEnabled were added to what gets SAVED without being added here too.
+  // Chorus settings are compared merged over the default, the same way they are applied: a preset
+  // saved before a field existed (type/harmonic, later voicing) would otherwise never match again.
+  const withChorusDefaults = (settings: ChorusSettings): ChorusSettings => ({ ...DEFAULT_CHORUS, ...settings })
   const activeRigPresetId = rigPresets.find((p) =>
-    sameSettings(p.settings, {
+    sameSettings({ ...p.settings, chorus: withChorusDefaults(p.settings.chorus) }, {
       gate,
       eq,
       chorus,
@@ -1653,7 +1659,7 @@ export function PlayerPanel({
       pedalGainDb: preGainDb,
       pedalEnabled: preEnabled
     }))?.id ?? null
-  const activeChorusPresetId = chorusPresets.find((p) => sameSettings(p.settings, chorus))?.id ?? null
+  const activeChorusPresetId = chorusPresets.find((p) => sameSettings(withChorusDefaults(p.settings), chorus))?.id ?? null
   const activeEchoLabPresetId = echoLabPresets.find((p) => sameSettings(p.settings, echoLab))?.id ?? null
   const activeDelayPresetId = delayPresets.find((p) => sameSettings(p.settings, delay) && p.irPath === delayIrPath)?.id ?? null
   const activeReverbPresetId = reverbPresets.find((p) => sameSettings(p.settings, reverb) && p.irPath === reverbPath)?.id ?? null
@@ -2259,7 +2265,7 @@ export function PlayerPanel({
                       : 'border-gray-200 dark:border-[var(--border)] text-gray-500 dark:text-gray-400'
                   }`}
                   title={chorus.harmonic
-                    ? 'Harmonic: low and high bands swell and dip in opposition (silverface Fender vibrato channel)'
+                    ? 'Harmonic: low and high bands swell and dip in opposition (brownface Fender vibrato channel)'
                     : 'Standard: the whole signal’s level moves together'}
                 >
                   Harmonic
@@ -2279,10 +2285,10 @@ export function PlayerPanel({
               <FxSlider compact={fxCompact} label="Mix" value={chorus.mix} min={0} max={1} step={0.01}
                 format={(v) => `${Math.round(v * 100)}%`}
                 onChange={(v) => setChorusState((c) => ({ ...c, mix: v }))} />
-              <FxSlider compact={fxCompact} label="Depth" value={chorus.depthMs} min={0.2} max={12} step={0.1}
+              <FxSlider compact={fxCompact} label="Depth" value={chorus.depthMs} min={0} max={CHORUS_MAX_DEPTH_MS} step={0.1}
                 format={(v) => `${v.toFixed(1)} ms`}
                 onChange={(v) => setChorusState((c) => ({ ...c, depthMs: v }))} />
-              <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={0.05} max={6} step={0.05}
+              <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={MOD_RATE_MIN_HZ} max={MOD_RATE_MAX_HZ} step={0.05}
                 format={(v) => `${v.toFixed(2)} Hz`}
                 onChange={(v) => setChorusState((c) => ({ ...c, rateHz: v }))} />
               {/* Chorus-only, and the chain's mono-to-stereo conversion point — at 0 the two
@@ -2293,16 +2299,39 @@ export function PlayerPanel({
                 onChange={(v) => setChorusState((c) => ({ ...c, width: v }))} />
             </div>
           ) : (
-            <div style={fxCardGrid}>
-              {/* No Mix here on purpose — a real Fender tremolo has no wet/dry knob either,
-                  just Speed and Intensity; `enabled` fully engages the circuit. */}
-              <FxSlider compact={fxCompact} label="Depth" value={chorus.tremoloDepth} min={0} max={1} step={0.01}
-                format={(v) => `${Math.round(v * 100)}%`}
-                onChange={(v) => setChorusState((c) => ({ ...c, tremoloDepth: v }))} />
-              <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={0.05} max={6} step={0.05}
-                format={(v) => `${v.toFixed(2)} Hz`}
-                onChange={(v) => setChorusState((c) => ({ ...c, rateHz: v }))} />
-            </div>
+            <>
+              <div style={fxCardGrid}>
+                {/* No Mix here on purpose — a real Fender tremolo has no wet/dry knob either,
+                    just Speed and Intensity; `enabled` fully engages the circuit. */}
+                <FxSlider compact={fxCompact} label="Depth" value={chorus.tremoloDepth} min={0} max={1} step={0.01}
+                  format={(v) => `${Math.round(v * 100)}%`}
+                  onChange={(v) => setChorusState((c) => ({ ...c, tremoloDepth: v }))} />
+                <FxSlider compact={fxCompact} label="Rate" value={chorus.rateHz} min={MOD_RATE_MIN_HZ} max={MOD_RATE_MAX_HZ} step={0.05}
+                  format={(v) => `${v.toFixed(2)} Hz`}
+                  onChange={(v) => setChorusState((c) => ({ ...c, rateHz: v }))} />
+              </div>
+              {/* The rack's Voicing knob, as the same segmented switch as Chorus/Tremolo. Harmonic
+                  is its own circuit, so voicing does nothing while it is on. */}
+              <div className={`flex items-center gap-2 mt-2 ${chorus.harmonic ? 'opacity-40 pointer-events-none' : ''}`}>
+                <span className="text-[11px] text-gray-500 dark:text-gray-400">Voicing</span>
+                <div className="flex rounded-md bg-gray-100 dark:bg-[var(--field)] border border-gray-200 dark:border-[var(--border)] p-0.5">
+                  {([['tube', "'63 Tube", 'Power-tube bias tremolo: smooth, rounded swells'], ['photo', "'65 Photo", 'Blackface optical tremolo: choppier, throbbing pulse']] as const).map(([voicing, voicingLabel, tip]) => (
+                    <button
+                      key={voicing}
+                      title={tip}
+                      onClick={() => setChorusState((c) => ({ ...c, voicing }))}
+                      className={`h-[22px] px-2 rounded text-[11px] font-medium transition-colors ${
+                        chorus.voicing === voicing
+                          ? 'bg-white dark:bg-[#232c36] text-gray-900 dark:text-gray-100 shadow-sm'
+                          : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                      }`}
+                    >
+                      {voicingLabel}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
         </FxCard>
 

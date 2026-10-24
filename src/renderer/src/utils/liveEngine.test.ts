@@ -7,6 +7,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import {
+  CHORUS_MAX_DEPTH_MS,
   DEFAULT_CHORUS,
   DEFAULT_DELAY,
   DEFAULT_EQ,
@@ -18,6 +19,8 @@ import {
   EQ_MID_HZ,
   EQ_TREBLE_HZ,
   MAX_FEEDBACK,
+  MOD_RATE_MAX_HZ,
+  normalizeChorus,
   REVERB_EQ_MAX_DB,
   REVERB_HIGH_SHELF_HZ,
   REVERB_LOW_SHELF_HZ
@@ -186,6 +189,35 @@ describe('setChorus', () => {
     expect(e.chorus.type).toBe('tremolo')
     expect(() => e.setChorus({ harmonic: true })).not.toThrow()
     expect(e.chorus.harmonic).toBe(true)
+  })
+
+  it('caps chorus depth at the same maximum the UIs offer', () => {
+    const e = engine()
+    e.setChorus({ depthMs: 12 })
+    expect(e.chorus.depthMs).toBe(CHORUS_MAX_DEPTH_MS)
+    e.setChorus({ rateHz: 100 })
+    expect(e.chorus.rateHz).toBe(MOD_RATE_MAX_HZ)
+  })
+
+  it('keeps tremolo voicing separate from chorus width', () => {
+    const e = engine()
+    e.setChorus({ width: 0.2 })
+    expect(e.chorus.voicing).toBe('tube')
+    e.setChorus({ voicing: 'photo' })
+    expect(e.chorus.width).toBe(0.2)
+    expect(e.chorus.voicing).toBe('photo')
+  })
+
+  it('defaults voicing to the smooth tube shape the tremolo always had', () => {
+    expect(DEFAULT_CHORUS.voicing).toBe('tube')
+  })
+
+  it('normalizes presets saved before voicing existed, and junk values', () => {
+    const legacy = { ...DEFAULT_CHORUS } as Partial<typeof DEFAULT_CHORUS>
+    delete legacy.voicing
+    const n = normalizeChorus({ ...(legacy as typeof DEFAULT_CHORUS), rateHz: Number.NaN })
+    expect(n.voicing).toBe('tube')
+    expect(n.rateHz).toBe(DEFAULT_CHORUS.rateHz)
   })
 })
 

@@ -227,16 +227,29 @@ export interface ChorusSettings {
   /** Tremolo-only: how deep the volume dips, 0..1 (0 = no effect, 1 = full mute at the trough). */
   tremoloDepth: number
   /**
-   * Tremolo-only: harmonic (silverface Fender "vibrato channel") vs standard tremolo.
+   * Tremolo-only: harmonic (brownface Fender, 1959-63, "vibrato channel") vs standard tremolo.
    *
    * Standard modulates the whole signal's level together. Harmonic splits the signal into low
    * and high bands through a crossover and modulates them 180° out of phase — as the low band
    * swells the high band dips — which is what gives it the subtle shimmer/coloring plain
    * tremolo doesn't have. Fender's own panels historically mislabeled this circuit "Vibrato";
-   * it is not pitch vibrato.
+   * it is not pitch vibrato. The blackface/silverface amps that followed dropped it for the
+   * optical circuit (see `voicing`).
    */
   harmonic: boolean
+  /**
+   * Tremolo-only: the standard tremolo's LFO character. Its own field rather than doubling up on
+   * `width` — sharing it meant picking a tremolo voice silently changed the chorus's stereo width,
+   * and a chorus width under 50% secretly switched the tremolo voice where no control showed it.
+   *
+   *   tube  — '63 power-tube bias tremolo: the LFO swings the output valves' bias, smooth and round.
+   *   photo — '65 blackface optical: a neon bulb that only fires past its strike voltage, read by
+   *           an LDR. The lamp switching hard on and off is what makes it the choppy, throbbing one.
+   */
+  voicing: TremoloVoicing
 }
+
+export type TremoloVoicing = 'tube' | 'photo'
 
 export const DEFAULT_CHORUS: ChorusSettings = {
   enabled: false,
@@ -246,11 +259,19 @@ export const DEFAULT_CHORUS: ChorusSettings = {
   depthMs: 1.5,
   rateHz: 0.5,
   tremoloDepth: 0.6,
-  harmonic: false
+  harmonic: false,
+  // Smooth sine, which is what the default tremolo has always sounded like.
+  voicing: 'tube'
 }
 
 /** Centre delay a chorus sweeps around. Short enough to fuse with the dry signal. */
 const CHORUS_CENTRE_MS = 18
+/** Largest total (peak-to-peak) chorus sweep, shared by the engine clamp and both UIs. Past this
+ *  the faster rates stop being chorus and become seasick vibrato. */
+export const CHORUS_MAX_DEPTH_MS = 6
+/** Shared by the chorus and tremolo Rate controls. */
+export const MOD_RATE_MIN_HZ = 0.05
+export const MOD_RATE_MAX_HZ = 8
 
 /**
  * Harmonic tremolo's low/high crossover point. Documented brownface Fender component values put
@@ -259,10 +280,64 @@ const CHORUS_CENTRE_MS = 18
  * likely read as darkness independent of the crossover-summing fix above.
  */
 const TREMOLO_CROSSOVER_HZ = 450
-/** Below Butterworth on purpose: a wide, sloppy overlap is what makes harmonic tremolo phase.
- *  Only affects HOW GRADUALLY energy hands off between bands now — see buildFxChain for why the
- *  static (unmodulated) response no longer depends on this the way two separate filters would. */
-const TREMOLO_CROSSOVER_Q = 0.5
+/** Photocell LFO shaping: tanh(k·x)/tanh(k). Higher k = squarer, choppier throb. */
+const PHOTO_LFO_DRIVE = 3
+
+/** Clamp a modulation settings object to what the engine will actually run. */
+export function normalizeChorus(settings: ChorusSettings): ChorusSettings {
+  const clamp = (v: number, lo: number, hi: number, fallback: number): number =>
+    Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback
+  return {
+    ...settings,
+    type: settings.type === 'tremolo' ? 'tremolo' : 'chorus',
+    voicing: settings.voicing === 'photo' ? 'photo' : 'tube',
+    mix: clamp(settings.mix, 0, 1, DEFAULT_CHORUS.mix),
+    depthMs: clamp(settings.depthMs, 0, CHORUS_MAX_DEPTH_MS, DEFAULT_CHORUS.depthMs),
+    rateHz: clamp(settings.rateHz, MOD_RATE_MIN_HZ, MOD_RATE_MAX_HZ, DEFAULT_CHORUS.rateHz),
+    width: clamp(settings.width, 0, 1, DEFAULT_CHORUS.width),
+    tremoloDepth: clamp(settings.tremoloDepth, 0, 1, DEFAULT_CHORUS.tremoloDepth)
+  }
+}
+
+/**
+ * Glide an AudioParam to a value from wherever it is NOW.
+ *
+ * A bare linearRampToValueAtTime starts from the previous automation event, however long ago it
+ * was — after any idle time the "50ms ramp" is a line from seconds back, already ~99% done, so it
+ * lands as a step: a click on gain, a pitch blip on a delay line. Anchoring at the current value
+ * first is the same cancel/set/ramp sequence the cabinet blend uses.
+ */
+function glide(param: AudioParam | undefined, value: number, now: number, seconds: number): void {
+  if (!param) return
+  param.cancelScheduledValues(now)
+  param.setValueAtTime(param.value, now)
+  param.linearRampToValueAtTime(value, now + seconds)
+}
+
+/** tanh soft-square for the photocell voicing: same ±1 range and zero crossings as the sine. */
+function makePhotoLfoCurve(): Float32Array<ArrayBuffer> {
+  const n = 1025
+  const curve = new Float32Array(n)
+  const norm = Math.tanh(PHOTO_LFO_DRIVE)
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1
+    curve[i] = Math.tanh(PHOTO_LFO_DRIVE * x) / norm
+  }
+  return curve
+}
+
+/**
+ * First-order (one-pole) bilinear lowpass, as IIRFilterNode coefficients.
+ *
+ * The brownface split is a simple one-resistor, one-capacitor network, so the bands overlap a lot.
+ * A first-order lowpass and its complement (dry − lowpass) is exactly a first-order highpass:
+ * gentle 6 dB/oct slopes on both sides, and a perfect rebuild at rest.
+ */
+function onePoleLowpass(cornerHz: number, sampleRate: number): { feedforward: number[]; feedback: number[] } {
+  const k = Math.tan((Math.PI * Math.min(cornerHz, sampleRate * 0.45)) / sampleRate)
+  const b = k / (1 + k)
+  return { feedforward: [b, b], feedback: [1, (k - 1) / (k + 1)] }
+}
 
 export const DEFAULT_DELAY: DelaySettings = {
   mix: 0,
@@ -865,7 +940,12 @@ export class LiveEngine {
   private chorusCrossR: GainNode | null = null
   /** Tremolo — the Modulation block's other circuit. See buildFxChain for the shared-crossover design. */
   private tremOsc: OscillatorNode | null = null
-  private tremLowFilter: BiquadFilterNode | null = null
+  /** The two voicings' LFOs (plain sine, tanh-squared sine), crossfaded into tremLfo. */
+  private tremTubeLfo: GainNode | null = null
+  private tremPhotoShaper: WaveShaperNode | null = null
+  private tremPhotoLfo: GainNode | null = null
+  private tremLfo: GainNode | null = null
+  private tremLowFilter: IIRFilterNode | null = null
   /** High band = dry − lowpassed, not a separate highpass filter — see buildFxChain. */
   private tremHighSum: GainNode | null = null
   private tremLowInvert: GainNode | null = null
@@ -1166,6 +1246,9 @@ export class LiveEngine {
         }
       }
 
+      // Known before the graph exists so its LFOs are built at the real rate and voicing — setChorus
+      // below only runs after the delay IR has loaded.
+      this.chorusSettings = normalizeChorus({ ...DEFAULT_CHORUS, ...options.chorus })
       this.buildFxChain(ctx)
       this.buildPlate(ctx)
       this.setGate(options.gate ?? DEFAULT_GATE)
@@ -1289,6 +1372,11 @@ export class LiveEngine {
     // A short delay swept by an LFO. Two lines with their oscillators in quadrature so the sides
     // sweep at different points in the cycle — that difference is the chorus, rather than a
     // single detune applied to both.
+    //
+    // Every oscillator starts at the rate it will actually run at. An OscillatorNode defaults to
+    // 440 Hz, and setChorus only arrives after the delay IR has loaded — so the LFOs used to spend
+    // that stretch sweeping at audio rate, then the first ramp glided down through it.
+    const rate = this.chorusSettings.rateHz
     this.chorusIn = ctx.createGain()
     this.chorusOut = ctx.createGain()
     this.chorusOut.channelCount = 2
@@ -1304,7 +1392,15 @@ export class LiveEngine {
     this.chorusOscL = ctx.createOscillator()
     this.chorusOscR = ctx.createOscillator()
     this.chorusOscL.type = 'sine'
-    this.chorusOscR.type = 'sine'
+    // Quadrature from the waveform itself: R is a cosine (the same single harmonic, real instead
+    // of imaginary), so the two are exactly 90° apart whenever they start in the same quantum.
+    // Starting R "a quarter period late" instead only held if the rate stayed fixed during that
+    // wait — and it didn't (see above), so the stereo image came out different every session.
+    this.chorusOscR.setPeriodicWave(
+      ctx.createPeriodicWave(new Float32Array([0, 1]), new Float32Array([0, 0]))
+    )
+    this.chorusOscL.frequency.value = rate
+    this.chorusOscR.frequency.value = rate
     this.chorusDepthL = ctx.createGain()
     this.chorusDepthR = ctx.createGain()
     this.chorusDepthL.gain.value = 0
@@ -1336,9 +1432,9 @@ export class LiveEngine {
     this.chorusWet.connect(this.chorusOut)
     this.eqTreble.connect(this.chorusOut)
 
-    this.chorusOscL.start()
-    // A quarter period late, which is the quadrature that gives the two sides independent motion.
-    this.chorusOscR.start(ctx.currentTime + 0.25 / Math.max(0.05, this.chorusSettings.rateHz))
+    const lfoStart = ctx.currentTime
+    this.chorusOscL.start(lfoStart)
+    this.chorusOscR.start(lfoStart)
 
     // ── Tremolo, the Modulation block's other circuit (sits after chorusOut, before the delay).
     //
@@ -1351,6 +1447,23 @@ export class LiveEngine {
     // gain" convention as ping-pong/mono and plate/convolution reverb.
     this.tremOsc = ctx.createOscillator()
     this.tremOsc.type = 'sine'
+    this.tremOsc.frequency.value = rate
+
+    // Voicing is a crossfade between two LFO shapes off the one oscillator, not a change of
+    // oscillator type: swapping sine for another shape mid-cycle steps the gain, an audible tick.
+    this.tremTubeLfo = ctx.createGain()
+    this.tremPhotoShaper = ctx.createWaveShaper()
+    this.tremPhotoShaper.curve = makePhotoLfoCurve()
+    this.tremPhotoLfo = ctx.createGain()
+    const photo = this.chorusSettings.voicing === 'photo' && !this.chorusSettings.harmonic
+    this.tremTubeLfo.gain.value = photo ? 0 : 1
+    this.tremPhotoLfo.gain.value = photo ? 1 : 0
+    this.tremLfo = ctx.createGain()
+    this.tremOsc.connect(this.tremTubeLfo)
+    this.tremOsc.connect(this.tremPhotoShaper)
+    this.tremPhotoShaper.connect(this.tremPhotoLfo)
+    this.tremTubeLfo.connect(this.tremLfo)
+    this.tremPhotoLfo.connect(this.tremLfo)
 
     // STANDARD tremolo modulates the WHOLE signal on its own path, deliberately NOT through the
     // crossover. A 2nd-order lowpass and highpass at the same corner do not sum back to flat —
@@ -1361,22 +1474,22 @@ export class LiveEngine {
 
     // HARMONIC's crossover is deliberately NOT a matched lowpass/highpass pair. Two independent
     // 2nd-order (biquad) filters at the same corner do not sum back to a flat response — there is
-    // an inherent dip/coloration in the crossover region, and it gets WIDER at the low Q used
-    // here for the wide "sloppy overlap" that makes this phase at all. That non-flat region was
-    // very likely why this sounded dark even at rest: real brownface Fender harmonic vibrato uses
-    // a gentle passive RC network, not sharp filters, and a first-order complementary pair (one
-    // simple lowpass, its complement) reconstructs the original signal exactly when not being
-    // modulated — there is no "crossover coloration" to begin with in the real circuit.
+    // an inherent dip/coloration in the crossover region. Real brownface Fender harmonic vibrato
+    // splits with a gentle passive RC network, not sharp filters, and a first-order complementary
+    // pair (one simple lowpass, its complement) reconstructs the original signal exactly when not
+    // being modulated — there is no "crossover coloration" to begin with in the real circuit.
     //
     // Reproduced here as a SUBTRACTIVE split instead of two filters: the high band is computed as
     // dry − lowpassed (tremLowInvert is a gain of -1, summed with the dry signal at tremHighSum).
-    // That is exact by construction, regardless of the lowpass's order or Q — low + high always
-    // reconstructs the dry signal bit-for-bit at rest, so any coloration heard is only ever from
-    // the deliberate antiphase modulation, never from the split itself.
-    this.tremLowFilter = ctx.createBiquadFilter()
-    this.tremLowFilter.type = 'lowpass'
-    this.tremLowFilter.frequency.value = TREMOLO_CROSSOVER_HZ
-    this.tremLowFilter.Q.value = TREMOLO_CROSSOVER_Q
+    // That is exact by construction — low + high always reconstructs the dry signal at rest, so
+    // any coloration heard is only ever from the deliberate antiphase modulation.
+    //
+    // The lowpass is ONE pole, matching the RC original, which makes the complement a true
+    // first-order highpass. It used to be a biquad at "Q 0.5", but a Web Audio lowpass reads Q in
+    // dB: 0.5 dB is a linear Q of ~1.06, past Butterworth — a resonant bump at the corner in each
+    // band, and in the complement a 6 dB/oct shelf with a peak, not a highpass.
+    const lowpass = onePoleLowpass(TREMOLO_CROSSOVER_HZ, ctx.sampleRate)
+    this.tremLowFilter = ctx.createIIRFilter(lowpass.feedforward, lowpass.feedback)
     this.tremHighSum = ctx.createGain()
     this.tremLowInvert = ctx.createGain()
     this.tremLowInvert.gain.value = -1
@@ -1412,9 +1525,12 @@ export class LiveEngine {
     this.tremWetGain.connect(this.tremOut)
     this.tremBypassGain.connect(this.tremOut)
 
-    this.tremOsc.connect(this.tremFullDepthGain)
-    this.tremOsc.connect(this.tremLowDepthGain)
-    this.tremOsc.connect(this.tremHighDepthGain)
+    // A GainNode starts at 1, which for a depth gain means full-scale modulation until setChorus
+    // lands. Start every depth at 0 and every band at unity, i.e. no tremolo.
+    for (const g of [this.tremFullDepthGain, this.tremLowDepthGain, this.tremHighDepthGain]) g.gain.value = 0
+    this.tremLfo.connect(this.tremFullDepthGain)
+    this.tremLfo.connect(this.tremLowDepthGain)
+    this.tremLfo.connect(this.tremHighDepthGain)
     this.tremFullDepthGain.connect(this.tremFullGain.gain)
     this.tremLowDepthGain.connect(this.tremLowGain.gain)
     this.tremHighDepthGain.connect(this.tremHighGain.gain)
@@ -1860,12 +1976,7 @@ export class LiveEngine {
   }
 
   setChorus(settings: Partial<ChorusSettings>): void {
-    const next: ChorusSettings = { ...this.chorusSettings, ...settings }
-    next.mix = Math.max(0, Math.min(1, next.mix))
-    next.depthMs = Math.max(0, Math.min(20, next.depthMs))
-    next.rateHz = Math.max(0.05, Math.min(8, next.rateHz))
-    next.width = Math.max(0, Math.min(1, next.width))
-    next.tremoloDepth = Math.max(0, Math.min(1, next.tremoloDepth))
+    const next = normalizeChorus({ ...this.chorusSettings, ...settings })
     this.chorusSettings = next
 
     const ctx = this.ctx
@@ -1878,45 +1989,44 @@ export class LiveEngine {
     // not 2ms either side of centre.
     const depthSec = chorusActive ? next.depthMs / 2000 : 0
 
-    this.chorusWet?.gain.linearRampToValueAtTime(wet, now + RAMP)
-    this.chorusOscL?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
-    this.chorusOscR?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
-    this.chorusDepthL?.gain.linearRampToValueAtTime(depthSec, now + RAMP)
-    this.chorusDepthR?.gain.linearRampToValueAtTime(-depthSec, now + RAMP)
+    glide(this.chorusWet?.gain, wet, now, RAMP)
+    glide(this.chorusOscL?.frequency, next.rateHz, now, RAMP)
+    glide(this.chorusOscR?.frequency, next.rateHz, now, RAMP)
+    glide(this.chorusDepthL?.gain, depthSec, now, RAMP)
+    glide(this.chorusDepthR?.gain, -depthSec, now, RAMP)
 
     const direct = 0.5 + next.width / 2
     const cross = 0.5 - next.width / 2
-    this.chorusDirectL?.gain.linearRampToValueAtTime(direct, now + RAMP)
-    this.chorusDirectR?.gain.linearRampToValueAtTime(direct, now + RAMP)
-    this.chorusCrossL?.gain.linearRampToValueAtTime(cross, now + RAMP)
-    this.chorusCrossR?.gain.linearRampToValueAtTime(cross, now + RAMP)
+    glide(this.chorusDirectL?.gain, direct, now, RAMP)
+    glide(this.chorusDirectR?.gain, direct, now, RAMP)
+    glide(this.chorusCrossL?.gain, cross, now, RAMP)
+    glide(this.chorusCrossR?.gain, cross, now, RAMP)
 
     // Tremolo — shares the chorus rate knob (both are just an LFO frequency) but its own depth.
     const tremActive = next.enabled && next.type === 'tremolo'
     const harmonic = tremActive && next.harmonic
-    this.tremOsc?.frequency.linearRampToValueAtTime(next.rateHz, now + RAMP)
-    // Width doubles as the voicing switch in Tremolo mode (it does nothing else there — a real
-    // tremolo has no stereo-width control). Below centre: '63 tube-bias, a harder-edged triangle
-    // ramp closer to how a biased tube's on/off swing actually moves. At or above centre: '65
-    // photocell, sine — the physical lag of a lamp/photoresistor pair rounds the same swing off
-    // smoother than any electronic LFO would left alone. A frequency type change, not a new node.
-    if (this.tremOsc) this.tremOsc.type = next.width < 0.5 ? 'triangle' : 'sine'
-    this.tremBypassGain?.gain.linearRampToValueAtTime(tremActive ? 0 : 1, now + RAMP)
-    this.tremStdSel?.gain.linearRampToValueAtTime(tremActive && !harmonic ? 1 : 0, now + RAMP)
-    this.tremHarmSel?.gain.linearRampToValueAtTime(harmonic ? 1 : 0, now + RAMP)
+    glide(this.tremOsc?.frequency, next.rateHz, now, RAMP)
+    // Voicing only shapes the standard tremolo's LFO. Harmonic is its own circuit with its own
+    // (sine) oscillator in the real amp, so it always runs the round shape.
+    const photo = next.voicing === 'photo' && !harmonic
+    glide(this.tremTubeLfo?.gain, photo ? 0 : 1, now, RAMP)
+    glide(this.tremPhotoLfo?.gain, photo ? 1 : 0, now, RAMP)
+    glide(this.tremBypassGain?.gain, tremActive ? 0 : 1, now, RAMP)
+    glide(this.tremStdSel?.gain, tremActive && !harmonic ? 1 : 0, now, RAMP)
+    glide(this.tremHarmSel?.gain, harmonic ? 1 : 0, now, RAMP)
 
     // A modulated gain rides on a centre value with the oscillator swinging around it, so level
     // travels from 1 at the peak down to (1 - depth) at the trough.
     const swing = next.tremoloDepth / 2
     const centre = 1 - swing
-    this.tremFullGain?.gain.linearRampToValueAtTime(centre, now + RAMP)
-    this.tremFullDepthGain?.gain.linearRampToValueAtTime(swing, now + RAMP)
-    this.tremLowGain?.gain.linearRampToValueAtTime(centre, now + RAMP)
-    this.tremHighGain?.gain.linearRampToValueAtTime(centre, now + RAMP)
-    this.tremLowDepthGain?.gain.linearRampToValueAtTime(swing, now + RAMP)
+    glide(this.tremFullGain?.gain, centre, now, RAMP)
+    glide(this.tremFullDepthGain?.gain, swing, now, RAMP)
+    glide(this.tremLowGain?.gain, centre, now, RAMP)
+    glide(this.tremHighGain?.gain, centre, now, RAMP)
+    glide(this.tremLowDepthGain?.gain, swing, now, RAMP)
     // The high band runs in ANTIPHASE — it dips as the low band swells. That opposition, across
     // an overlapping crossover, is what separates harmonic tremolo from plain amplitude tremolo.
-    this.tremHighDepthGain?.gain.linearRampToValueAtTime(-swing, now + RAMP)
+    glide(this.tremHighDepthGain?.gain, -swing, now, RAMP)
   }
 
   /** Seconds of delay impulse being convolved, after trimming. 0 when none. */
@@ -2932,6 +3042,10 @@ export class LiveEngine {
       this.chorusDirectR,
       this.chorusCrossL,
       this.chorusCrossR,
+      this.tremTubeLfo,
+      this.tremPhotoShaper,
+      this.tremPhotoLfo,
+      this.tremLfo,
       this.tremLowFilter,
       this.tremHighSum,
       this.tremLowInvert,
@@ -3153,6 +3267,10 @@ export class LiveEngine {
       // Never started, or already stopped.
     }
     this.tremOsc = null
+    this.tremTubeLfo = null
+    this.tremPhotoShaper = null
+    this.tremPhotoLfo = null
+    this.tremLfo = null
     this.tremLowFilter = null
     this.tremHighSum = null
     this.tremLowInvert = null
